@@ -43,6 +43,8 @@ import { ExtendedColorLightDevice } from "@matter/main/devices/extended-color-li
 import { ThermostatDevice } from "@matter/main/devices/thermostat";
 import { WindowCoveringDevice } from "@matter/main/devices/window-covering";
 import { hasLocalActor } from "@matter/main/protocol";
+import { PowerSourceServer } from "@matter/main/behaviors/power-source";
+import { PowerSource } from "@matter/main/clusters/power-source";
 import { hsToRgb, kelvinToMireds, kelvinToRgb, miredsToKelvin, parseHex, rgbToHs, rgbToXy, toHex, xyToRgb } from "./color.js";
 import { log } from "./log.js";
 
@@ -221,6 +223,29 @@ const ColorServerHs = colorServer(true);
 const ColorServerCt = colorServer(false);
 
 const BridgedInfo = BridgedDeviceBasicInformationServer;
+
+/* Batterie de l'équipement (info BATTERY) : Google affiche le niveau et prévient quand elle faiblit. */
+const Battery = PowerSourceServer.with("Battery");
+
+function batteryState(percent) {
+    const level = percent === null ? null : clamp(percent, 0, 100);
+    return {
+        batPercentRemaining: level === null ? null : Math.round(level * 2),
+        batChargeLevel: level === null || level > 20 ? PowerSource.BatChargeLevel.Ok
+            : level > 10 ? PowerSource.BatChargeLevel.Warning : PowerSource.BatChargeLevel.Critical,
+        batReplacementNeeded: level !== null && level <= 10,
+    };
+}
+
+const BATTERY_INITIAL = {
+    powerSource: {
+        status: PowerSource.PowerSourceStatus.Active,
+        order: 0,
+        description: "Batterie",
+        batReplaceability: PowerSource.BatReplaceability.UserReplaceable,
+        ...batteryState(null),
+    },
+};
 
 const PresenceSensing = OccupancySensingServer.with(OccupancySensing.Feature.PhysicalContact);
 
@@ -465,6 +490,14 @@ const KINDS = {
             return Object.keys(out).length ? out : null;
         },
     },
+
+    /* Scénario Jeedom : interrupteur à impulsion, l'allumer lance le scénario puis il repasse à « éteint ». */
+    scenario: {
+        type: () => OnOffPlugInUnitDevice.with(BridgedInfo, JeedomOnOffServer),
+        state() {
+            return null;
+        },
+    },
 };
 
 export function isSupportedKind(kind) {
@@ -550,17 +583,19 @@ export class Device {
         const state = {};
         const initial = typeof this.kind.initial === "function" ? this.kind.initial(this) : this.kind.initial;
         if (initial) mergeState(state, structuredClone(initial));
+        if (this.hasBattery) mergeState(state, structuredClone(BATTERY_INITIAL));
         for (const [cmdId, roles] of this.roles) {
             if (!Object.hasOwn(values, cmdId)) continue;
             this.#values.set(cmdId, values[cmdId]);
             for (const role of roles) {
-                const patch = this.kind.state(role, values[cmdId], this);
+                const patch = role === "battery" ? this.#batteryPatch(values[cmdId]) : this.kind.state(role, values[cmdId], this);
                 if (patch) mergeState(state, patch);
             }
         }
 
         const name = matterString(this.spec.name);
-        this.endpoint = new Endpoint(this.kind.type(this), {
+        const type = this.hasBattery ? this.kind.type(this).with(Battery) : this.kind.type(this);
+        this.endpoint = new Endpoint(type, {
             id: this.spec.key,
             bridgedDeviceBasicInformation: {
                 nodeLabel: name,
@@ -629,10 +664,20 @@ export class Device {
      * attributs facultatifs). S'il change, l'endpoint doit être recréé : le
      * modifier en place violerait ses contraintes.
      */
+    get hasBattery() {
+        return !!this.spec.cmds?.battery && this.spec.kind !== "scenario";
+    }
+
+    #batteryPatch(value) {
+        if (!this.hasBattery) return null;
+        return { powerSource: batteryState(toNumber(value)) };
+    }
+
     get structureKey() {
         const { kind, params = {}, cmds = {} } = this.spec;
         return JSON.stringify({
             kind,
+            battery: this.hasBattery,
             hasColor: kind === "color_light" ? !!params.hasColor : undefined,
             mireds: kind === "color_light" ? this.miredsRange : undefined,
             setpoint: kind === "thermostat" ? this.setpointRange : undefined,
@@ -671,7 +716,7 @@ export class Device {
         this.#values.set(key, value);
         const state = {};
         for (const role of roles) {
-            const patch = this.kind.state(role, value, this);
+            const patch = role === "battery" ? this.#batteryPatch(value) : this.kind.state(role, value, this);
             if (patch) mergeState(state, patch);
         }
         if (!Object.keys(state).length) return;
@@ -719,7 +764,7 @@ export class Device {
             const detail = job.options && Object.keys(job.options).length ? " " + JSON.stringify(job.options) : "";
             log.info(`${this.label} : ${job.what} (commande ${cmdId}${detail})`);
             try {
-                await this.#link.exec(cmdId, job.options);
+                await this.#link.exec(cmdId, job.options, { bridge: this.spec.bridgeId, device: this.label, what: job.what });
                 return true;
             } catch (error) {
                 log.error(`${this.label} : « ${job.what} » refusé par Jeedom :`, error);
@@ -733,7 +778,25 @@ export class Device {
         return job.promise;
     }
 
+    /*
+     * Scénario : l'allumer le lance, puis l'interrupteur repasse à « éteint »
+     * une seconde plus tard, prêt pour la fois suivante. L'éteindre ne fait rien.
+     */
+    #launchScenario(on) {
+        if (!on) return;
+        const id = this.spec.scenario_id;
+        log.info(`${this.label} : lancement du scénario ${id}`);
+        this.#execChain = this.#execChain.then(() =>
+            this.#link.launchScenario(id, { bridge: this.spec.bridgeId, device: this.label, what: "scénario lancé" })
+                .catch(error => log.error(`${this.label} : lancement refusé par Jeedom :`, error)));
+        setTimeout(() => {
+            if (this.endpoint && !this.#retired) this.#enqueue(() => this.endpoint.set({ onOff: { onOff: false } }));
+        }, 1000);
+        return this.#execChain;
+    }
+
     commandOnOff(on) {
+        if (this.spec.kind === "scenario") return this.#launchScenario(on);
         const { cmds } = this.spec;
         if (!on) {
             this.#lastOff = Date.now();

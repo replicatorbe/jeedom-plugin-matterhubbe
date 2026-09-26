@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3
+
+- Scénarios Jeedom pilotables depuis Google : un scénario coché devient un
+  interrupteur qui le lance (« Ok Google, allume mode cinéma »).
+- Commande « Dernier ordre Google » sur le pont, utilisable comme déclencheur
+  de scénario.
+- Niveau de batterie des capteurs, serrures et volets affiché dans Google,
+  avec alerte de pile faible.
+- Chauffage par fil pilote exposé en marche / arrêt.
+
 ## 0.2
 
 - Volets : ouvrir, fermer, arrêter, position.

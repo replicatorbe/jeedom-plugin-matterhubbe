@@ -36,6 +36,9 @@ class matterhubbe extends eqLogic {
     /* Rôles de commandes que le démon peut exécuter ; tous les autres sont des infos qu'il suit. */
     const ACTION_ROLES = array('on', 'off', 'setLevel', 'up', 'down', 'stop', 'setSetpoint', 'lock', 'unlock', 'setColor', 'setColorTemp');
 
+    /* Fonctions qui reçoivent la batterie de l'équipement (info BATTERY), affichée par Google. */
+    const BATTERY_FAMILIES = array('contact', 'occupancy', 'temperature', 'humidity', 'lock', 'cover');
+
     const DEFAULT_PORT = 5540;
     const DEFAULT_SOCKET_PORT = 55064;
 
@@ -55,6 +58,10 @@ class matterhubbe extends eqLogic {
             'energy' => array(
                 'label' => __('Prise / relais', __FILE__),
                 'kinds' => array('plug', 'onoff_light'),
+            ),
+            'heating' => array(
+                'label' => __('Chauffage (fil pilote)', __FILE__),
+                'kinds' => array('plug'),
             ),
             'cover' => array(
                 'label' => __('Volet', __FILE__),
@@ -84,6 +91,10 @@ class matterhubbe extends eqLogic {
                 'label' => __('Humidité', __FILE__),
                 'kinds' => array('humidity'),
             ),
+            'scenario' => array(
+                'label' => __('Scénario', __FILE__),
+                'kinds' => array('scenario'),
+            ),
         );
     }
 
@@ -100,6 +111,7 @@ class matterhubbe extends eqLogic {
             'occupancy'      => __('Capteur de présence', __FILE__),
             'temperature'    => __('Capteur de température', __FILE__),
             'humidity'       => __('Capteur d\'humidité', __FILE__),
+            'scenario'       => __('Interrupteur (lance le scénario)', __FILE__),
         );
     }
 
@@ -296,6 +308,19 @@ class matterhubbe extends eqLogic {
             );
         }
 
+        /* Chauffage fil pilote : marche / arrêt, comme une prise. */
+        $state = self::findCmd($cmds, 'HEATING_STATE', 'info');
+        $on = self::findLinkedAction($cmds, 'HEATING_ON', $state);
+        $off = self::findLinkedAction($cmds, 'HEATING_OFF', $state);
+        if (is_object($on) && is_object($off)) {
+            $out['heating'] = array(
+                'default' => 'plug',
+                'kinds' => array('plug'),
+                'cmds' => array('state' => self::cmdId($state), 'on' => self::cmdId($on), 'off' => self::cmdId($off)),
+                'params' => array(),
+            );
+        }
+
         /* Volet. Jeedom : 0 = fermé, 100 = ouvert, à l'échelle du curseur ; binaire 1 = ouvert. */
         $state = self::findCmd($cmds, array('FLAP_STATE', 'FLAP_BSO_STATE'), 'info');
         $slider = self::findLinkedAction($cmds, 'FLAP_SLIDER', $state);
@@ -400,6 +425,42 @@ class matterhubbe extends eqLogic {
                 'invertable' => $family == 'contact',
             );
         }
+
+        /* Batterie de l'équipement, rattachée à ses capteurs, sa serrure, son volet. */
+        $battery = self::findCmd($cmds, 'BATTERY', 'info', 'numeric');
+        if (is_object($battery)) {
+            foreach (self::BATTERY_FAMILIES as $family) {
+                if (isset($out[$family])) {
+                    $out[$family]['cmds']['battery'] = self::cmdId($battery);
+                }
+            }
+        }
+        return $out;
+    }
+
+    /* Un scénario devient un interrupteur à impulsion : l'allumer lance le scénario. */
+    private static function scenarioCandidates() {
+        $out = array();
+        foreach (scenario::all() as $scenario) {
+            $group = trim((string) $scenario->getGroup());
+            $out[] = array(
+                'eq_id' => (int) $scenario->getId(),
+                'family' => 'scenario',
+                'familyLabel' => __('Scénario', __FILE__),
+                'familyOrder' => 99,
+                'name' => $scenario->getName(),
+                'humanName' => ($group != '' ? '[' . $group . '] ' : '') . $scenario->getName(),
+                'object' => __('Scénarios', __FILE__),
+                'plugin' => __('scénario', __FILE__),
+                'isEnable' => (int) $scenario->getIsActive(),
+                'default' => 'scenario',
+                'kinds' => array(array('kind' => 'scenario', 'label' => self::kindLabels()['scenario'])),
+                'invertable' => false,
+                'modes' => array(),
+                'defaultOff' => '',
+                'defaultHeat' => '',
+            );
+        }
         return $out;
     }
 
@@ -454,7 +515,12 @@ class matterhubbe extends eqLogic {
             }
             return $cmp != 0 ? $cmp : $a['familyOrder'] - $b['familyOrder'];
         });
-        return $out;
+        /* Les scénarios à la fin, groupés à part. */
+        $scenarios = self::scenarioCandidates();
+        usort($scenarios, function ($a, $b) {
+            return strcasecmp($a['humanName'], $b['humanName']);
+        });
+        return array_merge($out, $scenarios);
     }
 
     /* Sélection enregistrée sur le pont : [{eq_id, family, kind, name}, …]. */
@@ -494,6 +560,24 @@ class matterhubbe extends eqLogic {
         foreach ($selection as $item) {
             $eqId = isset($item['eq_id']) ? (int) $item['eq_id'] : 0;
             $family = isset($item['family']) ? $item['family'] : '';
+            if ($family == 'scenario') {
+                $scenario = scenario::byId($eqId);
+                if (!is_object($scenario)) {
+                    continue;
+                }
+                $name = isset($item['name']) ? trim($item['name']) : '';
+                $devices[] = array(
+                    'key' => 'sc' . $eqId . '-scenario',
+                    'kind' => 'scenario',
+                    'name' => $name != '' ? $name : $scenario->getName(),
+                    'productName' => $labels['scenario'],
+                    'scenario_id' => $eqId,
+                    'reachable' => $scenario->getIsActive() == 1,
+                    'cmds' => (object) array(),
+                    'params' => (object) array(),
+                );
+                continue;
+            }
             $eqLogic = eqLogic::byId($eqId);
             if (!is_object($eqLogic) || !isset($families[$family])) {
                 continue;
@@ -613,9 +697,14 @@ class matterhubbe extends eqLogic {
         $bridges = array();
         $infoIds = array();
         $actionIds = array();
+        $scenarioIds = array();
         foreach (self::byType(__CLASS__, true) as $bridge) {
             $devices = $bridge->buildDevices();
             foreach ($devices as $device) {
+                if (isset($device['scenario_id'])) {
+                    $scenarioIds[(int) $device['scenario_id']] = true;
+                    continue;
+                }
                 foreach ($device['cmds'] as $role => $cmdId) {
                     if (in_array($role, self::ACTION_ROLES)) {
                         $actionIds[$cmdId] = true;
@@ -640,6 +729,7 @@ class matterhubbe extends eqLogic {
             'bridges' => $bridges,
             'infoIds' => array_map('intval', array_keys($infoIds)),
             'actionIds' => array_map('intval', array_keys($actionIds)),
+            'scenarioIds' => array_map('intval', array_keys($scenarioIds)),
         );
     }
 
@@ -651,12 +741,13 @@ class matterhubbe extends eqLogic {
     private static function storeExposure($_exposure) {
         cache::set(__CLASS__ . '::event', count($_exposure['infoIds']) > 0 ? $_exposure['infoIds'] : array(-1));
         cache::set(__CLASS__ . '::allowedCmds', $_exposure['actionIds']);
+        cache::set(__CLASS__ . '::allowedScenarios', $_exposure['scenarioIds']);
         cache::set(__CLASS__ . '::fingerprint', md5(json_encode($_exposure['bridges'])));
     }
 
     /* Après « Vider le cache » de Jeedom, les listes sont reconstruites à la première demande. */
     private static function ensureExposure() {
-        if (!cache::exist(__CLASS__ . '::allowedCmds') || !cache::exist(__CLASS__ . '::event')) {
+        if (!cache::exist(__CLASS__ . '::allowedCmds') || !cache::exist(__CLASS__ . '::event') || !cache::exist(__CLASS__ . '::allowedScenarios')) {
             self::storeExposure(self::computeExposure());
         }
     }
@@ -712,8 +803,44 @@ class matterhubbe extends eqLogic {
         return array('datetime' => $cursor, 'events' => $events);
     }
 
+    /* Scénario lancé depuis Google, relayé par le démon. */
+    public static function launchScenarioFromDaemon($_scenarioId, $_meta = array()) {
+        self::ensureExposure();
+        $allowed = cache::byKey(__CLASS__ . '::allowedScenarios')->getValue(array());
+        if (!in_array((int) $_scenarioId, (array) $allowed)) {
+            throw new Exception(__('Scénario non exposé :', __FILE__) . ' ' . $_scenarioId);
+        }
+        $scenario = scenario::byId($_scenarioId);
+        if (!is_object($scenario)) {
+            throw new Exception(__('Scénario introuvable :', __FILE__) . ' ' . $_scenarioId);
+        }
+        if ($scenario->getIsActive() != 1) {
+            throw new Exception(__('Scénario désactivé :', __FILE__) . ' ' . $scenario->getHumanName());
+        }
+        log::add(__CLASS__, 'debug', __('Google Home : lancement du scénario', __FILE__) . ' ' . $scenario->getHumanName());
+        $scenario->launch();
+        self::recordLastCommand($_meta);
+    }
+
+    /*
+     * « Dernier ordre Google » du pont : un texte lisible, mis à jour à chaque
+     * ordre, même identique au précédent (les scénarios qui l'écoutent se
+     * déclenchent à chaque fois).
+     */
+    private static function recordLastCommand($_meta) {
+        if (!is_array($_meta) || !isset($_meta['bridge'])) {
+            return;
+        }
+        $bridge = self::byId($_meta['bridge']);
+        if (!is_object($bridge) || $bridge->getEqType_name() != __CLASS__) {
+            return;
+        }
+        $text = trim((isset($_meta['device']) ? $_meta['device'] : '') . ' : ' . (isset($_meta['what']) ? $_meta['what'] : ''), ' :');
+        $bridge->checkAndUpdateCmd('lastCommand', mb_substr($text, 0, 200));
+    }
+
     /* Commande demandée par Google, relayée par le démon. */
-    public static function execFromDaemon($_cmdId, $_options) {
+    public static function execFromDaemon($_cmdId, $_options, $_meta = array()) {
         self::ensureExposure();
         $allowed = cache::byKey(__CLASS__ . '::allowedCmds')->getValue(array());
         if (!in_array((int) $_cmdId, (array) $allowed)) {
@@ -737,6 +864,7 @@ class matterhubbe extends eqLogic {
         }
         log::add(__CLASS__, 'debug', __('Google Home :', __FILE__) . ' ' . $cmd->getHumanName() . ' ' . json_encode($options));
         $cmd->execCmd($options);
+        self::recordLastCommand($_meta);
     }
 
     /* Rechargement du démon si la configuration qu'il a reçue n'est plus la bonne. */
@@ -1098,7 +1226,7 @@ class matterhubbe extends eqLogic {
         self::reloadDaemonConfig();
     }
 
-    private function addInfoCmd($_logicalId, $_name, $_subType, $_order) {
+    private function addInfoCmd($_logicalId, $_name, $_subType, $_order, $_repeat = false) {
         $cmd = $this->getCmd(null, $_logicalId);
         if (is_object($cmd)) {
             return;
@@ -1111,6 +1239,9 @@ class matterhubbe extends eqLogic {
         $cmd->setSubType($_subType);
         $cmd->setIsVisible(1);
         $cmd->setOrder($_order);
+        if ($_repeat) {
+            $cmd->setConfiguration('repeatEventManagement', 'always');
+        }
         $cmd->save();
     }
 
@@ -1118,6 +1249,7 @@ class matterhubbe extends eqLogic {
         $this->addInfoCmd('commissioned', __('Appairé', __FILE__), 'binary', 1);
         $this->addInfoCmd('controllers', __('Contrôleurs', __FILE__), 'numeric', 2);
         $this->addInfoCmd('devices', __('Appareils exposés', __FILE__), 'numeric', 3);
+        $this->addInfoCmd('lastCommand', __('Dernier ordre Google', __FILE__), 'string', 4, true);
     }
 
     /*

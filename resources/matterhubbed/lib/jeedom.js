@@ -76,8 +76,16 @@ export class JeedomLink {
         return this.#json({ action: "changes", datetime, wait }, undefined, (wait + 20) * 1000);
     }
 
-    async exec(cmdId, options = {}) {
-        const text = await this.#request({ action: "exec" }, { cmd_id: cmdId, options }, 15_000);
+    /* meta : pont, appareil et action, pour la commande « Dernier ordre Google » du pont. */
+    async exec(cmdId, options = {}, meta = {}) {
+        const text = await this.#request({ action: "exec" }, { cmd_id: cmdId, options, meta }, 15_000);
+        if (text.trim() !== "OK") {
+            throw new Error(text.trim().slice(0, 200));
+        }
+    }
+
+    async launchScenario(scenarioId, meta = {}) {
+        const text = await this.#request({ action: "exec" }, { scenario_id: scenarioId, meta }, 15_000);
         if (text.trim() !== "OK") {
             throw new Error(text.trim().slice(0, 200));
         }

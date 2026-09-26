@@ -90,6 +90,12 @@ Le type d'appareil est déduit des **types génériques** des commandes
 | `FLAP_UP` + `FLAP_DOWN` et/ou `FLAP_SLIDER` (+ `FLAP_STATE`, `FLAP_STOP` ; variantes `FLAP_BSO_*`) | Volet |
 | `THERMOSTAT_SET_SETPOINT` (+ `THERMOSTAT_SETPOINT`, `THERMOSTAT_TEMPERATURE` ou `TEMPERATURE`, `THERMOSTAT_STATE`, `THERMOSTAT_MODE`, `THERMOSTAT_SET_MODE`) | Thermostat (chauffage) |
 | `LOCK_CLOSE` + `LOCK_OPEN` (+ `LOCK_STATE`) | Serrure |
+| `HEATING_ON` + `HEATING_OFF` (+ `HEATING_STATE`) : fil pilote | Prise (marche / arrêt du chauffage) |
+| Un **scénario** Jeedom | Interrupteur qui lance le scénario |
+
+Un équipement qui a une info `BATTERY` la transmet à ses capteurs, sa serrure
+et son volet : Google affiche le niveau et prévient quand la pile faiblit
+(alerte sous 20 %, remplacement sous 10 %).
 | `OPENING`, `OPENING_WINDOW` | Capteur d'ouverture |
 | `PRESENCE` | Capteur de présence |
 | `TEMPERATURE` | Capteur de température |
@@ -128,6 +134,21 @@ température + humidité apparaît comme deux capteurs.
   Température de couleur en kelvins (unité « K » ou bornes au-delà de 500),
   en mireds si les bornes sont petites ; sans bornes, 2700-6500 K. Une lampe
   couleur sans commande de blanc reçoit le blanc demandé comme une couleur.
+
+## Scénarios
+
+Les scénarios Jeedom apparaissent en bas de l'onglet « Appareils exposés ».
+Un scénario coché devient un interrupteur dans Google : l'allumer lance le
+scénario, puis l'interrupteur repasse à « éteint » tout seul, prêt pour la fois
+suivante. Donnez-lui un nom facile à dire : « Ok Google, allume mode cinéma ».
+Un scénario désactivé dans Jeedom apparaît « hors ligne » dans Google.
+
+## Réagir aux ordres de Google
+
+Le pont a une commande info **Dernier ordre Google** : l'appareil et l'action
+demandée (« Plafonnier salon : allumer »), mise à jour à chaque ordre, même
+identique au précédent. Un scénario Jeedom peut s'en servir comme
+déclencheur, pour journaliser ou prévenir.
 
 ## Options par appareil
 

@@ -111,7 +111,7 @@ export class Bridge {
             log.warning(`${this.label} : type inconnu « ${spec.kind} » pour ${spec.name}`);
             return;
         }
-        const device = new Device(spec, this.#link);
+        const device = new Device({ ...spec, bridgeId: this.config.id }, this.#link);
         try {
             await this.#aggregator.add(device.createEndpoint(values));
             this.#devices.set(spec.key, device);
@@ -139,13 +139,14 @@ export class Bridge {
             }
         }
 
-        for (const [key, spec] of wanted) {
+        for (let [key, spec] of wanted) {
             const device = this.#devices.get(key);
             if (!device) {
                 await this.#addDevice(spec, values);
                 continue;
             }
             const previous = device.spec;
+            spec = { ...spec, bridgeId: this.config.id };
             if (new Device(spec, this.#link).structureKey !== device.structureKey) {
                 /*
                  * Forme changée (bornes, couleur ajoutée…) : l'endpoint est

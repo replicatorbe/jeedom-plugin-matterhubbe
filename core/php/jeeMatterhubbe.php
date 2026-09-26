@@ -63,10 +63,16 @@ try {
 
         case 'exec':
             $payload = json_decode(file_get_contents('php://input'), true);
+            if (is_array($payload) && isset($payload['scenario_id'])) {
+                matterhubbe::launchScenarioFromDaemon($payload['scenario_id'], isset($payload['meta']) && is_array($payload['meta']) ? $payload['meta'] : array());
+                echo 'OK';
+                die();
+            }
             if (!is_array($payload) || !isset($payload['cmd_id'])) {
                 throw new Exception(__('Demande illisible', __FILE__));
             }
-            matterhubbe::execFromDaemon($payload['cmd_id'], isset($payload['options']) ? $payload['options'] : array());
+            $meta = isset($payload['meta']) && is_array($payload['meta']) ? $payload['meta'] : array();
+            matterhubbe::execFromDaemon($payload['cmd_id'], isset($payload['options']) ? $payload['options'] : array(), $meta);
             echo 'OK';
             die();
 
