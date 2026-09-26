@@ -264,6 +264,15 @@ function toBool(value) {
     return Number.isFinite(number) && number > 0;
 }
 
+/* Info de connexion : hors ligne seulement si elle le dit (0, off, offline…) ; vide ou inconnue ne dit rien. */
+function parseOnline(value) {
+    if (typeof value === "boolean") return value;
+    const text = String(value ?? "").trim().toLowerCase();
+    if (text === "") return null;
+    if (["0", "false", "off", "offline", "hors ligne", "déconnecté", "deconnecte", "disconnected", "nok"].includes(text)) return false;
+    return true;
+}
+
 function toNumber(value) {
     if (value === null || value === undefined || value === "") return null;
     const number = Number(String(value).replace(",", "."));
@@ -520,6 +529,7 @@ const KINDS = {
         state(role, value, device) {
             if (role !== "value") return null;
             const alarm = toBool(value) !== !!device.spec.params.invert;
+            device.smokeChanged(alarm);
             return {
                 smokeCoAlarm: {
                     smokeState: alarm ? SmokeCoAlarm.AlarmState.Critical : SmokeCoAlarm.AlarmState.Normal,
@@ -583,6 +593,10 @@ export class Device {
     /* Dernière valeur de l'info ONLINE du module (null : inconnue ou absente). */
     #online = null;
     #lastIdentify = 0;
+    #identifyTimers = [];
+    #identifyRestore = null;
+    #pulseUntil = 0;
+    #smokeAlarm = null;
     #values = new Map();
 
     constructor(spec, link) {
@@ -679,7 +693,8 @@ export class Device {
             patch.nodeLabel = matterString(this.spec.name);
             patch.productLabel = matterString(this.spec.name);
         }
-        if ((previous.reachable !== false) !== (this.spec.reachable !== false)) {
+        /* Comparé à l'état réel de l'endpoint : un ancien objet a pu le laisser hors ligne (info ONLINE retirée depuis). */
+        if (this.endpoint?.state?.bridgedDeviceBasicInformation?.reachable !== this.reachable) {
             patch.reachable = this.reachable;
         }
         if (!Object.keys(patch).length) return;
@@ -728,14 +743,43 @@ export class Device {
 
     #batteryPatch(value) {
         if (!this.hasBattery) return null;
-        return { powerSource: batteryState(toNumber(value)) };
+        const patch = { powerSource: batteryState(toNumber(value)) };
+        /* Un détecteur de fumée porte aussi son propre indicateur de pile faible. */
+        if (this.spec.kind === "smoke") {
+            const level = patch.powerSource.batChargeLevel;
+            patch.smokeCoAlarm = {
+                batteryAlert: level === PowerSource.BatChargeLevel.Critical ? SmokeCoAlarm.AlarmState.Critical
+                    : level === PowerSource.BatChargeLevel.Warning ? SmokeCoAlarm.AlarmState.Warning : SmokeCoAlarm.AlarmState.Normal,
+            };
+        }
+        return patch;
+    }
+
+    /*
+     * Détecteur de fumée : Matter veut un événement à chaque début et fin
+     * d'alarme (smokeAlarm, allClear), c'est lui qui déclenche l'alerte du
+     * contrôleur. Émis après l'écriture de l'état, et seulement s'il change.
+     */
+    smokeChanged(alarm) {
+        if (this.#smokeAlarm === alarm) return;
+        const first = this.#smokeAlarm === null;
+        this.#smokeAlarm = alarm;
+        if (first) return;
+        setTimeout(() => {
+            if (!this.endpoint || this.#retired) return;
+            this.#enqueue(() => this.endpoint.act(agent => {
+                const events = agent.smokeCoAlarm.events;
+                if (alarm) events.smokeAlarm.emit({ alarmSeverityLevel: SmokeCoAlarm.AlarmState.Critical }, agent.context);
+                else events.allClear.emit(undefined, agent.context);
+            }));
+        }, 300);
     }
 
     /* Rôles communs à tous les types : batterie et connexion du module. */
     #commonPatch(role, value) {
         if (role === "battery") return this.#batteryPatch(value) ?? {};
         if (role === "online") {
-            this.#online = toBool(value);
+            this.#online = parseOnline(value);
             return { bridgedDeviceBasicInformation: { reachable: this.reachable } };
         }
         return null;
@@ -766,6 +810,7 @@ export class Device {
     }
 
     unregister() {
+        this.#cancelIdentify(true);
         this.#retired = true;
         clearTimeout(this.#coverTimer);
         if (this.endpoint && registry.get(this.endpoint) === this) {
@@ -817,6 +862,7 @@ export class Device {
      * dernière valeur part. Renvoie une promesse : true si Jeedom a accepté.
      */
     #exec(cmdId, options, what) {
+        this.#cancelIdentify(false);
         if (!cmdId) {
             log.warning(`${this.label} : aucune commande Jeedom pour « ${what} »`);
             this.#restore();
@@ -857,6 +903,9 @@ export class Device {
      */
     #launchScenario(on) {
         if (!on) return;
+        /* Un second « allumer » pendant l'impulsion n'est pas un second lancement. */
+        if (Date.now() < this.#pulseUntil) return;
+        this.#pulseUntil = Date.now() + 1500;
         const id = this.spec.scenario_id;
         log.info(`${this.label} : lancement du scénario ${id}`);
         this.#execChain = this.#execChain.then(() =>
@@ -882,22 +931,40 @@ export class Device {
     }
 
     identify() {
-        const { cmds, kind } = this.spec;
+        const cmds = this.spec.cmds ?? {};
         if (Date.now() - this.#lastIdentify < 15_000) return;
         this.#lastIdentify = Date.now();
-        const canSwitch = cmds.on && cmds.off && !["scenario", "lock", "cover", "thermostat"].includes(kind);
-        if (!canSwitch) {
+        /* Seulement les lumières : faire clignoter une prise couperait ce qui y est branché. */
+        const isLight = ["onoff_light", "dimmable_light", "color_light"].includes(this.spec.kind);
+        if (!isLight || !cmds.on || !cmds.off) {
             log.info(`${this.label} : identification demandée (rien à faire clignoter)`);
             return;
         }
         const wasOn = !!this.endpoint?.state?.onOff?.onOff;
         const steps = wasOn ? [cmds.off, cmds.on, cmds.off, cmds.on] : [cmds.on, cmds.off, cmds.on, cmds.off];
-        log.info(`${this.label} : identification, l'appareil va basculer deux fois`);
+        this.#identifyRestore = wasOn ? cmds.on : cmds.off;
+        log.info(`${this.label} : identification, la lumière va clignoter deux fois`);
         steps.forEach((cmdId, i) => {
-            setTimeout(() => {
-                if (!this.#retired) this.#link.exec(cmdId, {}).catch(error => log.warning(`${this.label} : identification :`, error));
-            }, i * 1500);
+            this.#identifyTimers.push(setTimeout(() => {
+                if (i === steps.length - 1) this.#identifyRestore = null;
+                this.#link.exec(cmdId, {}).catch(error => log.warning(`${this.label} : identification :`, error));
+            }, i * 1500));
         });
+    }
+
+    /*
+     * Un ordre de l'utilisateur interrompt l'identification : son ordre fait
+     * foi. Si l'appareil est retiré en cours de route, on le remet dans son
+     * état de départ plutôt que de le laisser à mi-chemin.
+     */
+    #cancelIdentify(restore) {
+        for (const timer of this.#identifyTimers) clearTimeout(timer);
+        this.#identifyTimers = [];
+        const target = this.#identifyRestore;
+        this.#identifyRestore = null;
+        if (restore && target) {
+            this.#link.exec(target, {}).catch(error => log.warning(`${this.label} : identification :`, error));
+        }
     }
 
     commandOnOff(on) {

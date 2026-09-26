@@ -72,7 +72,8 @@ function matterhubbeMarkModified() {
 function matterhubbeDefaultName(_candidate) {
   for (var key in matterhubbeSelection) {
     var s = matterhubbeSelection[key]
-    if (s.eq_id != _candidate.eq_id || s.family === _candidate.family) { continue }
+    /* Un scénario et un équipement peuvent avoir le même numéro : ils ne se suffixent pas l'un l'autre. */
+    if (s.eq_id != _candidate.eq_id || s.family === _candidate.family || s.family === 'scenario' || _candidate.family === 'scenario') { continue }
     var other = matterhubbeFindCandidate(s.eq_id, s.family)
     if (other && other.familyOrder < _candidate.familyOrder) {
       return _candidate.name + ' ' + _candidate.familyLabel.toLowerCase()
@@ -274,8 +275,16 @@ function matterhubbeFilter() {
 /* Une ligne modifiée met à jour la sélection tout de suite : le filtre peut la masquer ensuite sans rien perdre. */
 function matterhubbeReadRow(_tr) {
   var key = _tr.getAttribute('data-key')
-  if (!_tr.querySelector('.matterhubbeSelect').checked) {
+  var checked = _tr.querySelector('.matterhubbeSelect').checked
+  var options = _tr.querySelector('.matterhubbeOptions')
+  if (options) { options.style.display = checked ? '' : 'none' }
+  if (!checked) {
     delete matterhubbeSelection[key]
+  } else if (!_tr.querySelector('.matterhubbeName')) {
+    /* Ligne fantôme recochée : on reprend ce qui était enregistré. */
+    matterhubbeSelection[key] = matterhubbeSaved[key] || matterhubbeSelection[key] || {
+      eq_id: parseInt(_tr.getAttribute('data-eq_id')), family: _tr.getAttribute('data-family'), kind: '', name: ''
+    }
   } else {
     var kind = _tr.querySelector('.matterhubbeKind')
     var name = _tr.querySelector('.matterhubbeName')
@@ -516,8 +525,13 @@ function matterhubbeSuggest() {
   matterhubbeConfirm('{{Cocher}} ' + added.length + ' {{appareil(s) proposé(s) ? Ce qui est déjà coché reste coché ; vous pourrez tout relire avant d\'enregistrer.}}', function (_ok) {
     if (!_ok) { return }
     added.forEach(function (_c) {
-      var item = { eq_id: _c.eq_id, family: _c.family, kind: _c.suggestedKind || _c.default, name: '', label: _c.humanName }
-      matterhubbeSelection[matterhubbeRowKey(_c.eq_id, _c.family)] = item
+      var key = matterhubbeRowKey(_c.eq_id, _c.family)
+      /* Un type ou un nom déjà saisi sur la ligne (non cochée) est gardé. */
+      var row = document.querySelector('#table_matterhubbeDevices tr.matterhubbeDevice[data-key="' + key + '"]')
+      var typedKind = row && row.querySelector('.matterhubbeKind') ? row.querySelector('.matterhubbeKind').value : ''
+      var typedName = row && row.querySelector('.matterhubbeName') ? row.querySelector('.matterhubbeName').value.trim() : ''
+      var kind = (typedKind && typedKind !== _c.default) ? typedKind : (_c.suggestedKind || _c.default)
+      matterhubbeSelection[key] = { eq_id: _c.eq_id, family: _c.family, kind: kind, name: typedName, label: _c.humanName }
     })
     matterhubbeMarkModified()
     matterhubbeUpdateCount()
@@ -541,16 +555,20 @@ function matterhubbeAutoNames() {
     var box = _tr.querySelector('.matterhubbeSelect')
     var input = _tr.querySelector('.matterhubbeName')
     var candidate = matterhubbeFindCandidate(_tr.getAttribute('data-eq_id'), _tr.getAttribute('data-family'))
-    if (!box || !box.checked || !input || input.value.trim() !== '' || !candidate) { return }
+    if (_tr.style.display === 'none' || !box || !box.checked || !input || input.value.trim() !== '' || !candidate) { return }
     /* Le nom proposé porte déjà la fonction quand il le faut (« Température salon ») : utilisé tel quel. */
     var name = candidate.suggestedName || ''
+    /* Relais passé en lumière (ou l'inverse) après la proposition : le préfixe suit le type choisi. */
+    var kindSelect = _tr.querySelector('.matterhubbeKind')
+    if (kindSelect && kindSelect.value === 'onoff_light' && name.indexOf('Prise ') === 0) { name = 'Lumière ' + name.slice(6) }
+    if (kindSelect && kindSelect.value === 'plug' && name.indexOf('Lumière ') === 0) { name = 'Prise ' + name.slice(8) }
     if (name === '' || name === matterhubbeDefaultName(candidate)) { return }
     input.value = name.slice(0, 32)
     matterhubbeReadRow(_tr)
     changed++
   })
   if (changed === 0) {
-    jeedomUtils.showAlert({ message: '{{Aucun nom à proposer : les appareils cochés ont déjà un nom lisible ou un nom saisi.}}', level: 'info' })
+    jeedomUtils.showAlert({ message: '{{Aucun nom à proposer : les appareils cochés et affichés ont déjà un nom lisible ou un nom saisi.}}', level: 'info' })
     return
   }
   matterhubbeMarkModified()
@@ -586,6 +604,8 @@ function printEqLogic(_eqLogic) {
     })
   }
   document.getElementById('in_matterhubbeFilter').value = ''
+  document.getElementById('sel_matterhubbeObject').value = ''
+  document.getElementById('sel_matterhubbeFamily').value = ''
   var only = document.getElementById('bt_matterhubbeOnlySelected')
   only.setAttribute('data-state', '0')
   only.classList.remove('btn-success')
@@ -709,6 +729,7 @@ window.matterhubbeOnClick = function (_event) {
     var button = target.closest('#bt_matterhubbeOnlySelected')
     var on = button.getAttribute('data-state') !== '1'
     button.setAttribute('data-state', on ? '1' : '0')
+    button.setAttribute('aria-pressed', on ? 'true' : 'false')
     button.classList.toggle('btn-success', on)
     button.classList.toggle('btn-default', !on)
     matterhubbeFilter()

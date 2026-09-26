@@ -91,6 +91,10 @@ Le type d'appareil est déduit des **types génériques** des commandes
 | `THERMOSTAT_SET_SETPOINT` (+ `THERMOSTAT_SETPOINT`, `THERMOSTAT_TEMPERATURE` ou `TEMPERATURE`, `THERMOSTAT_STATE`, `THERMOSTAT_MODE`, `THERMOSTAT_SET_MODE`) | Thermostat (chauffage) |
 | `LOCK_CLOSE` + `LOCK_OPEN` (+ `LOCK_STATE`) | Serrure |
 | `HEATING_ON` + `HEATING_OFF` (+ `HEATING_STATE`) : fil pilote | Prise (marche / arrêt du chauffage) |
+| `OPENING`, `OPENING_WINDOW` | Capteur d'ouverture |
+| `PRESENCE` | Capteur de présence |
+| `TEMPERATURE` | Capteur de température |
+| `HUMIDITY` | Capteur d'humidité |
 | `SMOKE` | Détecteur de fumée |
 | `WATER_LEAK`, `FLOOD` | Détecteur de fuite d'eau |
 | `BRIGHTNESS` (lux) | Capteur de luminosité |
@@ -107,16 +111,12 @@ plus, au lieu de garder un état périmé.
 Les détecteurs de fumée et de fuite sont proposés, sauf quand l'équipement est
 une caméra (sa « détection de fumée » n'est pas un vrai détecteur). Selon les
 versions de Google Home, ces types peuvent ne pas encore être affichés.
-| `OPENING`, `OPENING_WINDOW` | Capteur d'ouverture |
-| `PRESENCE` | Capteur de présence |
-| `TEMPERATURE` | Capteur de température |
-| `HUMIDITY` | Capteur d'humidité |
 
 Un même équipement peut donner plusieurs appareils : un module
 température + humidité apparaît comme deux capteurs.
 
-- **Luminosité** : la plage du curseur (`LIGHT_SLIDER`, valeurs min et max de la
-  commande) est convertie vers l'échelle Matter.
+- **Luminosité d'une lampe** : la plage du curseur (`LIGHT_SLIDER`, valeurs min
+  et max de la commande) est convertie vers l'échelle Matter.
 - **Ouvertures** : Jeedom compte 1 = fermé. Si le plugin de l'équipement
   remonte l'inverse et que la commande est réglée sur « Inverser », le plugin en
   tient compte.
@@ -150,14 +150,15 @@ température + humidité apparaît comme deux capteurs.
 
 - **Proposer une sélection** coche ce qui a du sens dans Google : lumières,
   prises, chauffage, volets, thermostats, serrures, ouvertures et vraies sondes
-  de température ou d'humidité. Ce qui est déjà coché reste coché. Sont laissés
-  de côté, et signalés en rouge : ce qu'un « Ok Google, éteins tout » ne doit
-  pas couper (modem, box, NVR, VMC, chaudière, pompe, portail, garage, verrou,
-  tableau électrique…), les températures internes des modules (celle d'un
-  relais n'est pas celle de la pièce) et les présences de téléphones ou de
+  de température ou d'humidité. Ce qui est déjà coché reste coché. Les relais
+  qu'un « Ok Google, éteins tout » ne doit pas couper (modem, box, NVR, VMC,
+  chaudière, pompe, portail, porte de garage, verrou, tableau électrique…) sont
+  laissés de côté et signalés en rouge. Ne sont pas proposées non plus, sans
+  signalement : les températures internes des modules et des passerelles
+  (commande « interne », ou plus de 45 °C) et les présences de téléphones ou de
   caméras. Un relais dont le nom parle d'éclairage (plafond, spot, projecteur,
   lampe, façade…) est proposé en « Lumière ».
-- **Noms automatiques** remplit les noms vides des appareils cochés avec un nom
+- **Noms automatiques** remplit les noms vides des appareils cochés et affichés avec un nom
   lisible : « Shelly 1 440FA4 — shellyplafondsalon » devient « Plafond salon »,
   une sonde devient « Température cuisine ». Un nom déjà saisi n'est jamais
   remplacé ; relisez avant d'enregistrer.
@@ -168,14 +169,18 @@ température + humidité apparaît comme deux capteurs.
 Les scénarios Jeedom apparaissent en bas de l'onglet « Appareils exposés ».
 Un scénario coché devient un interrupteur dans Google : l'allumer lance le
 scénario, puis l'interrupteur repasse à « éteint » tout seul, prêt pour la fois
-suivante. Donnez-lui un nom facile à dire : « Ok Google, allume mode cinéma ».
+suivante. Donnez-lui un nom facile à dire : « Ok Google, allume mode cinéma ». Le
+scénario reçoit le tag `#source#` = `google`. Attention : rangé dans une pièce
+de Google, il peut aussi être lancé par « Ok Google, allume tout » dans cette
+pièce ; laissez-le hors des pièces si ce n'est pas voulu.
 Un scénario désactivé dans Jeedom apparaît « hors ligne » dans Google.
 
 ## Retrouver un appareil : « Identifier »
 
 Quand l'application Google Home (ou un autre contrôleur) demande à identifier
 un appareil, une lampe ou un relais bascule deux fois puis revient à son état :
-pratique pour savoir quel « Plafonnier » ranger dans quelle pièce.
+pratique pour savoir quel « Plafonnier » ranger dans quelle pièce. Les prises
+ne clignotent pas : cela couperait ce qui y est branché.
 
 ## Réagir aux ordres de Google
 
@@ -212,7 +217,7 @@ Dans l'onglet « Appareils exposés », une fois la ligne cochée :
 
 ## Plusieurs contrôleurs, réappairage
 
-Le bouton **Ouvrir l'appairage** (visible une fois le pont appairé) rend le code
+Le bouton **Autoriser un nouvel appairage** (visible une fois le pont appairé) rend le code
 à nouveau utilisable pendant 15 minutes : pour réappairer Google après une
 réinitialisation du hub, ou pour ajouter un second contrôleur Matter.
 

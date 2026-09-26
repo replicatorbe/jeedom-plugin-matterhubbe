@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.5.1
+
+- « Proposer une sélection » ne coche plus les températures internes des
+  modules et passerelles (commande « interne » ou plus de 45 °C) ; « Lampe
+  garage » ou « Xbox » ne sont plus signalés à tort comme risqués.
+- Noms automatiques mieux découpés (accents, noms déjà lisibles gardés,
+  coupure au dernier espace, doublons numérotés) et qui suivent le type
+  choisi ; seulement sur les lignes affichées.
+- « Identifier » ne fait plus clignoter les prises, s'interrompt dès qu'un
+  ordre est donné, et remet la lumière dans son état si elle est retirée.
+- Un scénario n'est plus lancé deux fois par deux appuis rapprochés ; il
+  reçoit le tag #source# = google.
+- Détecteurs de fumée : événements d'alarme et de fin d'alarme, alerte de
+  pile faible.
+- Une info de connexion vide ne met plus l'appareil hors ligne ; un appareil
+  n'y reste plus bloqué après un changement de commandes.
+- Alertes : elles disparaissent bien une fois le problème réglé, même au bout
+  de plusieurs jours ; « Code d'appairage » ne génère plus d'événement à
+  chaque rafraîchissement.
+- Interface : options affichées avec « cocher les lignes affichées », saisie
+  gardée par « Proposer », filtres remis à zéro d'un pont à l'autre.
+- Documentation corrigée (tableau des types).
+
 ## 0.5
 
 - Un module déconnecté (info ONLINE) apparaît « hors ligne » dans Google.

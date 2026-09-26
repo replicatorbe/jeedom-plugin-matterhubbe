@@ -1,10 +1,10 @@
 {
     "id": "matterhubbe",
     "name": "Matter Hub",
-    "pluginVersion": "0.5",
+    "pluginVersion": "0.5.1",
     "description": {
-        "fr_FR": "Expose vos équipements et scénarios Jeedom à Google Home par Matter, entièrement en local : ni cloud, ni DNS Jeedom, ni abonnement. Le plugin crée un pont Matter que l'application Google Home appaire avec un QR code ; lumières (y compris couleur), prises, chauffage fil pilote, volets, thermostats, serrures, capteurs d'ouverture, de présence, de température et d'humidité y apparaissent d'après leurs types génériques, et se pilotent à la voix ou depuis l'application. Les scénarios deviennent des interrupteurs qui se lancent à la voix.",
-        "en_US": "Exposes your Jeedom devices and scenarios to Google Home through Matter, fully local: no cloud, no Jeedom DNS, no subscription. The plugin creates a Matter bridge that the Google Home app pairs with a QR code; lights (including color), plugs, pilot-wire heating, covers, thermostats, locks, contact, occupancy, temperature and humidity sensors appear from their generic types and can be controlled by voice or from the app. Scenarios become switches you can trigger by voice."
+        "fr_FR": "Expose vos équipements et scénarios Jeedom à Google Home par Matter, entièrement en local : ni cloud, ni DNS Jeedom, ni abonnement. Le plugin crée un pont Matter que l'application Google Home appaire avec un QR code ; lumières (y compris couleur), prises, chauffage fil pilote, volets, thermostats, serrures, capteurs d'ouverture, de présence, de température, d'humidité et de luminosité, détecteurs de fumée et de fuite d'eau y apparaissent d'après leurs types génériques, et se pilotent à la voix ou depuis l'application. Les scénarios deviennent des interrupteurs qui se lancent à la voix.",
+        "en_US": "Exposes your Jeedom devices and scenarios to Google Home through Matter, fully local: no cloud, no Jeedom DNS, no subscription. The plugin creates a Matter bridge that the Google Home app pairs with a QR code; lights (including color), plugs, pilot-wire heating, covers, thermostats, locks, contact, occupancy, temperature, humidity and light sensors, smoke and water leak detectors appear from their generic types and can be controlled by voice or from the app. Scenarios become switches you can trigger by voice."
     },
     "licence": "AGPL",
     "author": "sMug (Jérôme Fafchamps)",

@@ -190,13 +190,14 @@ $eqLogics = eqLogic::byType($plugin->getId());
 						<select class="form-control input-sm" id="sel_matterhubbeObject" style="width:auto;" aria-label="{{Pièce}}"><option value="">{{Toutes les pièces}}</option></select>
 						<select class="form-control input-sm" id="sel_matterhubbeFamily" style="width:auto;" aria-label="{{Fonction}}"><option value="">{{Toutes les fonctions}}</option></select>
 					</div>
+					<span class="help-block" style="margin-top:0;">{{« Proposer » coche ce qui est utile dans Google, sans ce qu'un « éteins tout » ne doit pas couper ; « Noms automatiques » remplit les noms vides. Relisez puis enregistrez.}}</span>
 					<div class="input-group" style="margin-bottom:10px;">
 						<input class="form-control roundedLeft" placeholder="{{Filtrer par nom, objet, plugin ou fonction}}" id="in_matterhubbeFilter">
 						<span class="input-group-btn">
-							<a class="btn btn-default" id="bt_matterhubbeCheckVisible" title="{{Cocher les lignes affichées}}" aria-label="{{Cocher les lignes affichées}}"><i class="far fa-check-square"></i></a>
-							<a class="btn btn-default" id="bt_matterhubbeUncheckVisible" title="{{Décocher les lignes affichées}}" aria-label="{{Décocher les lignes affichées}}"><i class="far fa-square"></i></a>
-							<a class="btn btn-default" id="bt_matterhubbeOnlySelected" data-state="0" title="{{Afficher seulement les appareils cochés}}"><i class="fas fa-filter"></i> {{Cochés}}</a>
-							<a class="btn btn-default roundedRight" id="bt_matterhubbeReloadCandidates" title="{{Relire les équipements}}" aria-label="{{Relire les équipements}}"><i class="fas fa-sync"></i></a>
+							<a class="btn btn-default" id="bt_matterhubbeCheckVisible" role="button" tabindex="0" title="{{Cocher les lignes affichées}}" aria-label="{{Cocher les lignes affichées}}"><i class="far fa-check-square"></i></a>
+							<a class="btn btn-default" id="bt_matterhubbeUncheckVisible" role="button" tabindex="0" title="{{Décocher les lignes affichées}}" aria-label="{{Décocher les lignes affichées}}"><i class="far fa-square"></i></a>
+							<a class="btn btn-default" id="bt_matterhubbeOnlySelected" data-state="0" role="button" tabindex="0" aria-pressed="false" title="{{Afficher seulement les appareils cochés}}"><i class="fas fa-filter"></i> {{Cochés}}</a>
+							<a class="btn btn-default roundedRight" id="bt_matterhubbeReloadCandidates" role="button" tabindex="0" title="{{Relire les équipements}}" aria-label="{{Relire les équipements}}"><i class="fas fa-sync"></i></a>
 						</span>
 					</div>
 					<div class="table-responsive">

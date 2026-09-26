@@ -543,12 +543,16 @@ class matterhubbe extends eqLogic {
         /* Noms proposés : suivis de la pièce quand plusieurs équipements portent le même nom. */
         $counts = array();
         foreach ($out as $candidate) {
+            if ($candidate['isEnable'] != 1) {
+                continue;
+            }
             $key = mb_strtolower(self::suggestName($candidate['name'], ''));
             $counts[$key][$candidate['eq_id']] = true;
         }
         foreach ($out as &$candidate) {
             $base = self::suggestName($candidate['name'], '');
-            $name = self::suggestName($candidate['name'], $candidate['object'], count($counts[mb_strtolower($base)]) > 1);
+            $same = isset($counts[mb_strtolower($base)]) ? count($counts[mb_strtolower($base)]) : 0;
+            $name = self::suggestName($candidate['name'], $candidate['object'], $same > 1);
             /*
              * Une sonde dit ce qu'elle mesure (« Température salle à manger »),
              * sauf si son nom le dit déjà ; un nom d'un seul mot (« Cuisine »)
@@ -557,14 +561,28 @@ class matterhubbe extends eqLogic {
             $sensor = in_array($candidate['family'], array('temperature', 'humidity'));
             if (($sensor && !preg_match('/(temp|sonde|humid|hygro|thermo)/iu', $name)) || count(preg_split('/\s+/', $name)) == 1) {
                 $what = ($candidate['family'] == 'energy' && $candidate['suggestedKind'] == 'onoff_light') ? __('Lumière', __FILE__)
-                    : ($candidate['family'] == 'energy' ? __('Prise', __FILE__) : $candidate['familyLabel']);
+                    : ($candidate['family'] == 'energy' ? __('Prise', __FILE__)
+                    : ($candidate['family'] == 'heating' ? __('Chauffage', __FILE__) : $candidate['familyLabel']));
                 /* Première lettre en minuscule, sauf pour un sigle (« ESP bureau » le reste). */
                 $second = mb_substr($name, 1, 1);
                 $lower = ($second !== '' && mb_strtoupper($second) === $second && mb_strtolower($second) !== $second) ? $name
                     : mb_strtolower(mb_substr($name, 0, 1)) . mb_substr($name, 1);
-                $name = mb_substr($what . ' ' . $lower, 0, 32);
+                $name = self::cutName($what . ' ' . $lower);
             }
             $candidate['suggestedName'] = $name;
+        }
+        unset($candidate);
+        /* Deux équipements actifs qui finissent avec le même nom : « 2 », « 3 »… en dernier recours. */
+        $used = array();
+        foreach ($out as &$candidate) {
+            if ($candidate['isEnable'] != 1) {
+                continue;
+            }
+            $key = mb_strtolower($candidate['suggestedName']) . '|' . $candidate['family'];
+            $used[$key] = isset($used[$key]) ? $used[$key] + 1 : 1;
+            if ($used[$key] > 1) {
+                $candidate['suggestedName'] = mb_substr($candidate['suggestedName'], 0, 29) . ' ' . $used[$key];
+            }
         }
         unset($candidate);
         usort($out, function ($a, $b) {
@@ -622,6 +640,9 @@ class matterhubbe extends eqLogic {
             if ($family == 'scenario') {
                 $scenario = scenario::byId($eqId);
                 if (!is_object($scenario)) {
+                    self::notifyOnce($this->getId(), 'lost::' . $this->getId() . '::' . $eqId . '::scenario',
+                        $this->getName() . ' : ' . __('un scénario exposé a été supprimé de Jeedom', __FILE__) . ' ('
+                        . (isset($item['label']) ? $item['label'] : '#' . $eqId) . ') : ' . __('décochez-le dans l\'onglet « Appareils exposés ».', __FILE__));
                     continue;
                 }
                 $name = isset($item['name']) ? trim($item['name']) : '';
@@ -640,7 +661,7 @@ class matterhubbe extends eqLogic {
             $eqLogic = eqLogic::byId($eqId);
             if (!is_object($eqLogic) || !isset($families[$family])) {
                 if (!is_object($eqLogic) && isset($families[$family])) {
-                    self::notifyOnce('lost::' . $this->getId() . '::' . $eqId . '::' . $family,
+                    self::notifyOnce($this->getId(), 'lost::' . $this->getId() . '::' . $eqId . '::' . $family,
                         $this->getName() . ' : ' . __('un équipement exposé a été supprimé de Jeedom', __FILE__) . ' ('
                         . (isset($item['label']) ? $item['label'] : '#' . $eqId) . ') : ' . __('décochez-le dans l\'onglet « Appareils exposés ».', __FILE__));
                 }
@@ -650,12 +671,12 @@ class matterhubbe extends eqLogic {
                 $analyses[$eqId] = self::analyzeEquipment($eqLogic);
             }
             if (!isset($analyses[$eqId][$family])) {
-                self::notifyOnce('lost::' . $this->getId() . '::' . $eqId . '::' . $family,
+                self::notifyOnce($this->getId(), 'lost::' . $this->getId() . '::' . $eqId . '::' . $family,
                     $this->getName() . ' : ' . $eqLogic->getHumanName() . ' ' . __('n\'a plus de commande de type', __FILE__)
                     . ' « ' . $families[$family]['label'] . ' » : ' . __('il n\'est plus envoyé à Google. Vérifiez ses types génériques, ou décochez-le.', __FILE__));
                 continue;
             }
-            self::clearNotice('lost::' . $this->getId() . '::' . $eqId . '::' . $family);
+            self::clearNotice($this->getId(), 'lost::' . $this->getId() . '::' . $eqId . '::' . $family);
             $info = $analyses[$eqId][$family];
             $kind = (isset($item['kind']) && in_array($item['kind'], $info['kinds'])) ? $item['kind'] : $info['default'];
 
@@ -884,7 +905,11 @@ class matterhubbe extends eqLogic {
             throw new Exception(__('Scénario désactivé :', __FILE__) . ' ' . $scenario->getHumanName());
         }
         log::add(__CLASS__, 'debug', __('Google Home : lancement du scénario', __FILE__) . ' ' . $scenario->getHumanName());
-        $scenario->launch();
+        /* Le scénario peut savoir d'où vient l'ordre : tag #source# = google. */
+        $scenario->setTags(array('#source#' => 'google', '#trigger_message#' => 'Google Home'));
+        if ($scenario->launch() === false) {
+            throw new Exception(__('Jeedom n\'a pas lancé le scénario (scénarios désactivés, ou déjà en cours) :', __FILE__) . ' ' . $scenario->getHumanName());
+        }
         self::recordLastCommand($_meta);
     }
 
@@ -901,7 +926,7 @@ class matterhubbe extends eqLogic {
         if (!is_object($bridge) || $bridge->getEqType_name() != __CLASS__) {
             return;
         }
-        $text = trim((isset($_meta['device']) ? $_meta['device'] : '') . ' : ' . (isset($_meta['what']) ? $_meta['what'] : ''), ' :');
+        $text = trim(strip_tags((isset($_meta['device']) ? (string) $_meta['device'] : '') . ' : ' . (isset($_meta['what']) ? (string) $_meta['what'] : '')), ' :');
         $bridge->checkAndUpdateCmd('lastCommand', mb_substr($text, 0, 200));
     }
 
@@ -950,25 +975,51 @@ class matterhubbe extends eqLogic {
 
     /*
      * Message dans le centre de messages de Jeedom, une seule fois tant que la
-     * situation dure : le contrôle périodique ne doit pas le répéter.
+     * situation dure : le contrôle périodique ne doit pas le répéter. Les
+     * marques sont gardées par pont, sans durée de vie.
      */
-    public static function notifyOnce($_key, $_text) {
-        $key = __CLASS__ . '::notified::' . md5($_key);
-        if (cache::exist($key)) {
+    public static function notifyOnce($_bridgeId, $_key, $_text) {
+        $cacheKey = __CLASS__ . '::notices::' . (int) $_bridgeId;
+        $notices = cache::byKey($cacheKey)->getValue(array());
+        if (!is_array($notices)) {
+            $notices = array();
+        }
+        if (isset($notices[$_key])) {
             return;
         }
-        cache::set($key, 1, 86400);
+        $notices[$_key] = 1;
+        cache::set($cacheKey, $notices, 0);
         log::add(__CLASS__, 'warning', $_text);
         message::add(__CLASS__, $_text, '', substr($_key, 0, 120));
     }
 
     /* La situation est rentrée dans l'ordre : le message disparaît, et pourra revenir. */
-    public static function clearNotice($_key) {
-        if (!cache::exist(__CLASS__ . '::notified::' . md5($_key))) {
+    public static function clearNotice($_bridgeId, $_key) {
+        $cacheKey = __CLASS__ . '::notices::' . (int) $_bridgeId;
+        $notices = cache::byKey($cacheKey)->getValue(array());
+        if (!is_array($notices) || !isset($notices[$_key])) {
             return;
         }
-        cache::delete(__CLASS__ . '::notified::' . md5($_key));
+        unset($notices[$_key]);
+        cache::set($cacheKey, $notices, 0);
         message::removeAll(__CLASS__, substr($_key, 0, 120));
+    }
+
+    /*
+     * À l'enregistrement d'un pont, les alertes « appareil perdu » repartent de
+     * zéro : un appareil décoché ne doit pas garder son message, et ceux qui
+     * restent perdus seront signalés à nouveau à la relecture.
+     */
+    public static function resetLostNotices($_bridgeId) {
+        $cacheKey = __CLASS__ . '::notices::' . (int) $_bridgeId;
+        $notices = cache::byKey($cacheKey)->getValue(array());
+        foreach (is_array($notices) ? array_keys($notices) : array() as $key) {
+            if (strpos($key, 'lost::') === 0) {
+                unset($notices[$key]);
+            }
+        }
+        cache::set($cacheKey, is_array($notices) ? $notices : array(), 0);
+        message::removeAll(__CLASS__, 'lost::' . (int) $_bridgeId . '::', true);
     }
 
     /* État des ponts envoyé par le démon : codes d'appairage, contrôleurs. */
@@ -987,19 +1038,19 @@ class matterhubbe extends eqLogic {
             /* Un pont qui n'a pas démarré n'a ni code ni contrôleurs à jour : on garde le dernier état connu, et on prévient. */
             if (empty($status['running'])) {
                 if (!empty($status['error'])) {
-                    self::notifyOnce('start::' . $bridge->getId(), $bridge->getName() . ' : ' . __('le pont Matter ne démarre pas :', __FILE__)
+                    self::notifyOnce($bridge->getId(), 'start::' . $bridge->getId(), $bridge->getName() . ' : ' . __('le pont Matter ne démarre pas :', __FILE__)
                         . ' ' . self::readableError((string) $status['error']));
                 }
                 continue;
             }
-            self::clearNotice('start::' . $bridge->getId());
+            self::clearNotice($bridge->getId(), 'start::' . $bridge->getId());
             $previous = $bridge->getCache('matter_status', array());
             if (!empty($previous['commissioned']) && empty($status['commissioned'])) {
-                self::notifyOnce('unpaired::' . $bridge->getId(), $bridge->getName() . ' : '
+                self::notifyOnce($bridge->getId(), 'unpaired::' . $bridge->getId(), $bridge->getName() . ' : '
                     . __('plus aucun contrôleur n\'est appairé (Google a oublié le pont ?). Scannez à nouveau le QR code depuis l\'onglet « Pont ».', __FILE__));
             }
             if (!empty($status['commissioned'])) {
-                self::clearNotice('unpaired::' . $bridge->getId());
+                self::clearNotice($bridge->getId(), 'unpaired::' . $bridge->getId());
             }
             $fabrics = (isset($status['fabrics']) && is_array($status['fabrics'])) ? $status['fabrics'] : array();
             $status['fabrics'] = $fabrics;
@@ -1008,8 +1059,13 @@ class matterhubbe extends eqLogic {
             $bridge->checkAndUpdateCmd('commissioned', !empty($status['commissioned']) ? 1 : 0);
             $bridge->checkAndUpdateCmd('controllers', count($fabrics));
             $bridge->checkAndUpdateCmd('devices', isset($status['devices']) ? (int) $status['devices'] : 0);
+            /* Seulement s'il change : une valeur vide ou identique produirait un événement à chaque statut. */
             $code = isset($status['manualPairingCode']) ? (string) $status['manualPairingCode'] : '';
-            $bridge->checkAndUpdateCmd('pairingCode', strlen($code) == 11 ? substr($code, 0, 4) . '-' . substr($code, 4, 3) . '-' . substr($code, 7) : $code);
+            $code = strlen($code) == 11 ? substr($code, 0, 4) . '-' . substr($code, 4, 3) . '-' . substr($code, 7) : $code;
+            $pairingCmd = $bridge->getCmd('info', 'pairingCode');
+            if ($code !== '' && is_object($pairingCmd) && $pairingCmd->execCmd() !== $code) {
+                $bridge->checkAndUpdateCmd('pairingCode', $code);
+            }
         }
     }
 
@@ -1017,7 +1073,7 @@ class matterhubbe extends eqLogic {
     /* ========================================================== AIDE À LA CONFIGURATION */
 
     /* Mots courants des noms d'équipements, pour découper les identifiants collés (« shellyplafondsalon »). */
-    const NAME_WORDS = 'plafond plafonnier salon cuisine chambre bureau couloir entree entre hall palier escalier etage rdc cave grenier garage
+    const NAME_WORDS = 'plafond plafonnier salon sejour cuisine chambre bureau couloir entree entre hall palier escalier etage rdc cave grenier garage
         buanderie cellier dressing salle bain douche wc toilette toilettes terrasse jardin piscine veranda pergola abri allee parking
         atelier local technique portail porte fenetre baie velux volet volets store stores facade exterieur interieur
         spot spots projecteur projecteurs lampe lampes led leds applique appliques lustre suspension ruban bandeau guirlande
@@ -1028,7 +1084,7 @@ class matterhubbe extends eqLogic {
         nord sud est ouest cote avant arriere gauche droite haut bas milieu centre principal principale sam de du la le les';
 
     const NAME_ACCENTS = array(
-        'entree' => 'entrée', 'entre' => 'entrée', 'etage' => 'étage', 'fenetre' => 'fenêtre', 'veranda' => 'véranda', 'allee' => 'allée',
+        'entree' => 'entrée', 'entre' => 'entrée', 'sejour' => 'séjour', 'etage' => 'étage', 'fenetre' => 'fenêtre', 'veranda' => 'véranda', 'allee' => 'allée',
         'facade' => 'façade', 'exterieur' => 'extérieur', 'interieur' => 'intérieur', 'eclairage' => 'éclairage',
         'lumiere' => 'lumière', 'lumieres' => 'lumières', 'bibliotheque' => 'bibliothèque', 'television' => 'télévision',
         'seche' => 'sèche', 'chaudiere' => 'chaudière', 'electrique' => 'électrique', 'etat' => 'état', 'invite' => 'invité',
@@ -1036,8 +1092,17 @@ class matterhubbe extends eqLogic {
         'temperature' => 'température', 'sam' => 'salle à manger',
     );
 
-    /* Morceaux purement techniques des noms (marque, modèle, protocole) : retirés. */
-    const NAME_TECH = '/^(shelly(plus|pro)?\d*(pm|em)?|mini\d*g?\d*|gen\d|omg|esp\d*|ble|plug|em|pm|sonoff|tasmota|zigbee|zwave|z2m|mqtt|wifi|gw|\d+)$/';
+    /* Morceaux purement techniques des noms (marque, modèle, protocole, identifiant) : retirés. */
+    const NAME_TECH = '/^(shelly(plus|pro)?\d*(pm|em)?|plus\d*(pm)?|pro\d*(pm)?|mini\d*g?\d*|gen\d|omg|esp\d*|ble|plug|em|pm|sonoff|tasmota|zigbee|zwave|z2m|mqtt|wifi|gw|\d+|(?=[0-9a-f]*\d)[0-9a-f]{6,12})$/';
+
+    /* Minuscules sans accents, indépendamment de la locale du serveur. */
+    private static function plainText($_text) {
+        return strtolower(strtr((string) $_text, array(
+            'à' => 'a', 'â' => 'a', 'ä' => 'a', 'À' => 'a', 'Â' => 'a', 'ç' => 'c', 'Ç' => 'c',
+            'é' => 'e', 'è' => 'e', 'ê' => 'e', 'ë' => 'e', 'É' => 'e', 'È' => 'e', 'Ê' => 'e',
+            'î' => 'i', 'ï' => 'i', 'Î' => 'i', 'ô' => 'o', 'ö' => 'o', 'Ô' => 'o', 'ù' => 'u', 'û' => 'u', 'ü' => 'u', 'Û' => 'u',
+        )));
+    }
 
     /* Découpe un morceau collé en mots connus ; null si trop de lettres restent inconnues. */
     private static function segmentWord($_chunk) {
@@ -1091,8 +1156,8 @@ class matterhubbe extends eqLogic {
         $known = count(array_filter($parts, function ($part) use ($dictionary) {
             return isset($dictionary[$part]);
         }));
-        /* Un prénom ou un reste de quelques lettres passe (« chambre loic ») ; un charabia, non. */
-        return ($known > 0 && $unknownTotal <= 5) ? $parts : null;
+        /* Un prénom ou un reste de quelques lettres passe (« chambre loic ») ; un charabia, non : 70 % de lettres reconnues au moins. */
+        return ($known > 0 && $unknownTotal <= 5 && $unknownTotal <= 0.3 * $n) ? $parts : null;
     }
 
     /*
@@ -1109,7 +1174,9 @@ class matterhubbe extends eqLogic {
             $base = strpos($name, ' — ') !== false ? substr($name, strrpos($name, ' — ') + strlen(' — ')) : $name;
             $base = preg_replace('/([a-z])([A-Z])/', '$1 $2', $base);
             $words = array();
-            foreach (preg_split('/[\s_\-.]+/', strtolower($base)) as $chunk) {
+            $chunks = preg_split('/[\s_\-.]+/', self::plainText($base));
+            $last = count($chunks) - 1;
+            foreach ($chunks as $position => $chunk) {
                 if ($chunk === '' || preg_match(self::NAME_TECH, $chunk)) {
                     continue;
                 }
@@ -1121,10 +1188,14 @@ class matterhubbe extends eqLogic {
                 if ($chunk === '') {
                     continue;
                 }
-                $parts = self::segmentWord($chunk);
-                foreach ($parts === null ? array($chunk) : $parts as $part) {
-                    /* Reste tronqué de deux lettres (identifiant coupé à 32 caractères) : ignoré. */
-                    if ($parts !== null && strlen($part) <= 2 && !in_array($part, array('tv', 'wc', 'de', 'du', 'la', 'le'))) {
+                /* Seuls les morceaux longs et collés sont découpés : « sejour » ou « estrade » restent entiers. */
+                $parts = strlen($chunk) >= 10 ? self::segmentWord($chunk) : null;
+                $parts = ($parts === null) ? array($chunk) : $parts;
+                $lastPart = count($parts) - 1;
+                foreach ($parts as $index => $part) {
+                    /* Reste de deux lettres en toute fin (identifiant coupé à 32 caractères) : ignoré. */
+                    if ($position == $last && $index == $lastPart && $lastPart > 0 && strlen($part) <= 2
+                        && !in_array($part, array('tv', 'wc'))) {
                         continue;
                     }
                     $words[] = isset(self::NAME_ACCENTS[$part]) ? self::NAME_ACCENTS[$part] : $part;
@@ -1132,22 +1203,32 @@ class matterhubbe extends eqLogic {
             }
             if (count($words) > 0) {
                 $name = implode(' ', $words);
+            } elseif (trim((string) $_object) !== '') {
+                /* Rien de lisible dans le nom (« Shelly1_4C7525 ») : la pièce seule dit mieux ce que c'est. */
+                $name = trim((string) $_object);
             }
         }
         $object = trim((string) $_object);
-        $plain = function ($text) {
-            return strtolower(iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $text));
-        };
-        if ($object !== '' && strpos($plain($name), $plain($object)) === false
+        if ($object !== '' && strpos(self::plainText($name), self::plainText($object)) === false
             && ($_ambiguous || count(preg_split('/\s+/', $name)) == 1)) {
             $name .= ' ' . mb_strtolower($object);
         }
         $name = mb_strtoupper(mb_substr($name, 0, 1)) . mb_substr($name, 1);
-        return mb_substr($name, 0, 32);
+        return self::cutName($name);
+    }
+
+    /* 32 caractères au plus (limite Matter), coupés au dernier espace plutôt qu'au milieu d'un mot. */
+    private static function cutName($_name) {
+        if (mb_strlen($_name) <= 32) {
+            return $_name;
+        }
+        $cut = mb_substr($_name, 0, 32);
+        $space = mb_strrpos($cut, ' ');
+        return ($space !== false && $space >= 16) ? mb_substr($cut, 0, $space) : $cut;
     }
 
     /* Appareils que l'on peut couper sans le vouloir d'un « Ok Google, éteins tout » : jamais proposés. */
-    const RISKY_WORDS = '/(modem|box|routeur|router|nvr|nas|serveur|server|switch r|onduleur|ups|frigo|cong[eé]lateur|freezer|fridge|pompe|vmc|chaudi|alarme|cam[eé]ra|ordinateur|\bpc\b|portail|garage|gache|g[aâ]che|verrou|serrure|tableau|contacteur|aquarium)/iu';
+    const RISKY_WORDS = '/(modem|\bbox\b|routeur|router|\bnvr\b|\bnas\b|serveur|server|switch r|onduleur|\bups\b|frigo|r[eé]frig|cong[eé]l|freezer|fridge|pompe|\bvmc\b|chaudi|alarme|cam[eé]ra|ordinateur|\bpc\b|portail|porte.{0,4}garage|moteur.{0,12}garage|garage.{0,3}door|gache|g[aâ]che|verrou|serrure|tableau.{0,3}[eé]lectrique|contacteur|aquarium)/iu';
 
     /* Mots qui disent qu'un relais commande un éclairage. */
     const LIGHT_WORDS = '/(plafon|spot|projecteur|lampe|\bled|applique|lustre|suspension|ruban|bandeau|guirlande|eclairage|éclairage|lumi[eè]re|lampadaire|chevet|facade|façade)/iu';
@@ -1161,7 +1242,7 @@ class matterhubbe extends eqLogic {
     private static function suggestion($_family, $_analysis, $_eqLogic) {
         $name = $_eqLogic->getName();
         $out = array('suggested' => false, 'warning' => '', 'suggestedKind' => '');
-        if (in_array($_family, array('light', 'energy', 'heating')) && preg_match(self::RISKY_WORDS, $name)) {
+        if (in_array($_family, array('energy', 'heating')) && preg_match(self::RISKY_WORDS, $name)) {
             $out['warning'] = __('à ne pas couper par erreur (« éteins tout »)', __FILE__);
             return $out;
         }
@@ -1196,8 +1277,16 @@ class matterhubbe extends eqLogic {
                 break;
             case 'temperature':
             case 'humidity':
-                /* Une vraie sonde de pièce : pas un module qui commande aussi une lumière ou une prise, ni un appareil (onduleur, chaudière…). */
-                $out['suggested'] = !isset($_analysis['light']) && !isset($_analysis['energy']) && !isset($_analysis['heating'])
+                /*
+                 * Une vraie sonde de pièce : pas un module qui commande aussi une
+                 * lumière ou une prise, ni un appareil (onduleur, chaudière…), ni
+                 * la température interne d'une puce (commande « interne », ou
+                 * plus de 45 °C : aucune pièce habitée n'est à cette température).
+                 */
+                $cmd = cmd::byId($_analysis[$_family]['cmds']['value']);
+                $internal = is_object($cmd) && (preg_match('/(intern|device|chip|puce|cpu|mcu|processeur|module)/iu', $cmd->getName())
+                    || ($_family == 'temperature' && is_numeric($cmd->execCmd()) && $cmd->execCmd() > 45));
+                $out['suggested'] = !$internal && !isset($_analysis['light']) && !isset($_analysis['energy']) && !isset($_analysis['heating'])
                     && !isset($_analysis['thermostat']) && !preg_match(self::RISKY_WORDS, $name);
                 break;
         }
@@ -1516,6 +1605,7 @@ class matterhubbe extends eqLogic {
     }
 
     public function postSave() {
+        self::resetLostNotices($this->getId());
         $this->createCommands();
         self::reloadDaemonConfig();
     }
@@ -1593,7 +1683,7 @@ class matterhubbe extends eqLogic {
         $status['dependancy'] = is_object($plugin) ? $plugin->dependancy_info()['state'] : 'nok';
         $status['error'] = self::readableError($error);
         $status['selected'] = count($this->getSelection());
-        $status['summary'] = $this->summary();
+        $status['summary'] = $this->getIsEnable() ? $this->summary() : null;
         return $status;
     }
 
@@ -1608,7 +1698,8 @@ class matterhubbe extends eqLogic {
         foreach ($devices as $device) {
             $types[$device['productName']] = (isset($types[$device['productName']]) ? $types[$device['productName']] : 0) + 1;
             $online = (is_array($device['cmds']) && isset($device['cmds']['online'])) ? cmd::byId($device['cmds']['online']) : null;
-            if (!$device['reachable'] || (is_object($online) && !$online->execCmd())) {
+            $value = is_object($online) ? strtolower(trim((string) $online->execCmd())) : '';
+            if (!$device['reachable'] || in_array($value, array('0', 'false', 'off', 'offline', 'hors ligne', 'nok'), true)) {
                 $offline[] = $device['name'];
             }
         }
