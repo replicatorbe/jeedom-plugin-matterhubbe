@@ -275,9 +275,10 @@ async function shutdown(signal) {
     for (const bridge of bridges.values()) {
         await bridge.stop();
     }
+    /* Seulement s'il est le nôtre : un second démon lancé par erreur ne doit pas effacer celui du premier. */
     if (args.pid) {
         try {
-            unlinkSync(args.pid);
+            if (readFileSync(args.pid, "utf8").trim() === String(process.pid)) unlinkSync(args.pid);
         } catch {
             /* déjà supprimé par Jeedom */
         }
@@ -289,16 +290,21 @@ process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("unhandledRejection", error => log.error("Erreur non rattrapée :", error));
 
-if (args.pid) {
-    writeFileSync(args.pid, String(process.pid));
-}
-
 socket.on("error", error => {
-    log.error(`Port des ordres ${args.socketport} indisponible :`, error);
+    log.error(`Port des ordres ${args.socketport} indisponible (un autre démon tourne-t-il déjà ?) :`, error);
     shutdown("port occupé");
 });
-socket.listen(Number(args.socketport), "127.0.0.1", () => {
-    log.info(`Démon démarré (pid ${process.pid}), ordres sur 127.0.0.1:${args.socketport}`);
+/*
+ * Le fichier de PID n'est écrit qu'une fois le port obtenu : deux lancements
+ * rapprochés (fin d'installation des dépendances et contrôle du cœur) ne
+ * doivent pas faire croire à Jeedom que le second, voué à s'arrêter, est le bon.
+ */
+await new Promise(resolve => {
+    socket.listen(Number(args.socketport), "127.0.0.1", () => {
+        if (args.pid) writeFileSync(args.pid, String(process.pid));
+        log.info(`Démon démarré (pid ${process.pid}), ordres sur 127.0.0.1:${args.socketport}`);
+        resolve();
+    });
 });
 
 /* Démarrage dans la file : un « reload » reçu pendant ce temps passera après, jamais avant. */

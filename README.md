@@ -4,9 +4,10 @@ Plugin Jeedom qui expose des équipements Jeedom à **Google Home** par
 **Matter**, entièrement en local, sans cloud ni abonnement.
 
 Le plugin crée un pont Matter (Aggregator) que l'application Google Home
-appaire avec un QR code. Les lumières, prises, capteurs d'ouverture, de
-présence, de température et d'humidité y apparaissent d'après leurs types
-génériques Jeedom, et se pilotent à la voix ou depuis l'application.
+appaire avec un QR code. Les lumières (y compris couleur), prises, volets,
+thermostats, serrures, capteurs d'ouverture, de présence, de température et
+d'humidité y apparaissent d'après leurs types génériques Jeedom, et se
+pilotent à la voix ou depuis l'application.
 
 Documentation : [docs/fr_FR/index.md](docs/fr_FR/index.md).
 

@@ -146,6 +146,23 @@ export class Bridge {
                 continue;
             }
             const previous = device.spec;
+            if (new Device(spec, this.#link).structureKey !== device.structureKey) {
+                /*
+                 * Forme changée (bornes, couleur ajoutée…) : l'endpoint est
+                 * recréé sous le même identifiant. close() et non delete() :
+                 * matter.js garde ainsi son numéro, et Google l'appareil.
+                 */
+                this.#devices.delete(key);
+                device.unregister();
+                try {
+                    await device.endpoint.close();
+                } catch (error) {
+                    log.warning(`${this.label} : fermeture de ${device.label} :`, error);
+                }
+                log.info(`${this.label} : ${spec.name} recréé (caractéristiques modifiées)`);
+                await this.#addDevice(spec, values);
+                continue;
+            }
             const rewired = JSON.stringify(previous.cmds) !== JSON.stringify(spec.cmds)
                 || JSON.stringify(previous.params) !== JSON.stringify(spec.params);
             let current = device;

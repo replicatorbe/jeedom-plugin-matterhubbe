@@ -77,7 +77,11 @@ Le type d'appareil est déduit des **types génériques** des commandes
 |---|---|
 | `LIGHT_ON` + `LIGHT_OFF` (+ `LIGHT_STATE` / `LIGHT_STATE_BOOL`) | Lumière |
 | … + `LIGHT_SLIDER` (+ `LIGHT_BRIGHTNESS`) | Lumière variable |
+| … + `LIGHT_SET_COLOR` (+ `LIGHT_COLOR`) et/ou `LIGHT_SET_COLOR_TEMP` (+ `LIGHT_COLOR_TEMP`) | Lumière couleur |
 | `ENERGY_ON` + `ENERGY_OFF` (+ `ENERGY_STATE`) | Prise, ou Lumière au choix |
+| `FLAP_UP` + `FLAP_DOWN` et/ou `FLAP_SLIDER` (+ `FLAP_STATE`, `FLAP_STOP`) | Volet |
+| `THERMOSTAT_SET_SETPOINT` (+ `THERMOSTAT_SETPOINT`, `THERMOSTAT_TEMPERATURE`, `THERMOSTAT_STATE`, `THERMOSTAT_MODE`, `THERMOSTAT_SET_MODE`) | Thermostat (chauffage) |
+| `LOCK_CLOSE` + `LOCK_OPEN` (+ `LOCK_STATE`) | Serrure |
 | `OPENING`, `OPENING_WINDOW` | Capteur d'ouverture |
 | `PRESENCE` | Capteur de présence |
 | `TEMPERATURE` | Capteur de température |
@@ -97,6 +101,22 @@ température + humidité apparaît comme deux capteurs.
   remet le dernier niveau connu, éteindre met le curseur au minimum.
 - **Modules à plusieurs relais** : une seule sortie par équipement est exposée
   (celle dont les commandes sont liées à l'info d'état).
+- **Volets** : Jeedom compte 0 = fermé et 100 = ouvert, à l'échelle du curseur
+  (`FLAP_SLIDER`, 0-99 compris) ; un état binaire vaut 1 = ouvert. « Tout ouvrir »
+  et « tout fermer » passent par les boutons haut/bas, une position
+  intermédiaire par le curseur. Sans curseur, une position devient « ouvrir »
+  ou « fermer ». Case « Inverser » si Google montre l'inverse.
+- **Thermostats** : chauffage seul pour l'instant. La consigne suit les bornes
+  et le pas du curseur `THERMOSTAT_SET_SETPOINT`. Les modes Jeedom
+  (`THERMOSTAT_SET_MODE`, une action par mode ou une liste) sont associés à
+  « arrêt » et « chauffage » de Google : proposés d'office (Off / Confort…),
+  modifiables par appareil. Eco, Hors-gel… n'ont pas d'équivalent Google.
+- **Serrures** : `LOCK_STATE` à 1 = verrouillée ; les deux actions sont exigées
+  (une gâche qui ne sait qu'ouvrir n'est pas proposée). Google ne permet pas de
+  déverrouiller à la voix : le déverrouillage se fait depuis l'application.
+- **Couleur** : `#rrggbb` côté Jeedom ; la luminosité reste celle de la lampe.
+  Température de couleur en kelvins (unité « K » ou bornes au-delà de 500),
+  en mireds sinon.
 
 ## Plusieurs contrôleurs, réappairage
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2
+
+- Volets : ouvrir, fermer, arrêter, position.
+- Thermostats (chauffage) : consigne, température, marche/arrêt par les modes
+  Jeedom.
+- Serrures : verrouiller, déverrouiller.
+- Lumières couleur : couleur et température de blanc.
+- Options par appareil : sens inversé, modes du thermostat.
+
 ## 0.1
 
 - Pont Matter local pour Google Home, appairage par QR code.

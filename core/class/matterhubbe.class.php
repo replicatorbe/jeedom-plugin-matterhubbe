@@ -33,6 +33,9 @@ class matterhubbe extends eqLogic {
     /* Un seul rechargement du démon par requête HTTP. */
     private static $_reloadScheduled = false;
 
+    /* Rôles de commandes que le démon peut exécuter ; tous les autres sont des infos qu'il suit. */
+    const ACTION_ROLES = array('on', 'off', 'setLevel', 'up', 'down', 'stop', 'setSetpoint', 'lock', 'unlock', 'setColor', 'setColorTemp');
+
     const DEFAULT_PORT = 5540;
     const DEFAULT_SOCKET_PORT = 55064;
 
@@ -47,11 +50,23 @@ class matterhubbe extends eqLogic {
         return array(
             'light' => array(
                 'label' => __('Lumière', __FILE__),
-                'kinds' => array('dimmable_light', 'onoff_light'),
+                'kinds' => array('color_light', 'dimmable_light', 'onoff_light'),
             ),
             'energy' => array(
                 'label' => __('Prise / relais', __FILE__),
                 'kinds' => array('plug', 'onoff_light'),
+            ),
+            'cover' => array(
+                'label' => __('Volet', __FILE__),
+                'kinds' => array('cover'),
+            ),
+            'thermostat' => array(
+                'label' => __('Thermostat', __FILE__),
+                'kinds' => array('thermostat'),
+            ),
+            'lock' => array(
+                'label' => __('Serrure', __FILE__),
+                'kinds' => array('lock'),
             ),
             'contact' => array(
                 'label' => __('Ouverture', __FILE__),
@@ -74,9 +89,13 @@ class matterhubbe extends eqLogic {
 
     public static function kindLabels() {
         return array(
+            'color_light'    => __('Lumière couleur', __FILE__),
             'dimmable_light' => __('Lumière variable', __FILE__),
             'onoff_light'    => __('Lumière', __FILE__),
             'plug'           => __('Prise', __FILE__),
+            'cover'          => __('Volet', __FILE__),
+            'thermostat'     => __('Thermostat', __FILE__),
+            'lock'           => __('Serrure', __FILE__),
             'contact'        => __('Capteur d\'ouverture', __FILE__),
             'occupancy'      => __('Capteur de présence', __FILE__),
             'temperature'    => __('Capteur de température', __FILE__),
@@ -121,6 +140,88 @@ class matterhubbe extends eqLogic {
         return is_object($_cmd) ? (int) $_cmd->getId() : null;
     }
 
+    /* Bornes min/max d'une commande, ou les valeurs par défaut si elles ne sont pas renseignées. */
+    private static function sliderRange($_cmd, $_min, $_max) {
+        $min = $_cmd->getConfiguration('minValue');
+        $max = $_cmd->getConfiguration('maxValue');
+        $min = is_numeric($min) ? (float) $min : $_min;
+        $max = is_numeric($max) ? (float) $max : $_max;
+        return ($max > $min) ? array($min, $max) : array($_min, $_max);
+    }
+
+    /*
+     * Température de couleur : Jeedom ne fixe pas l'unité. Kelvins si l'unité
+     * est « K » ou si les bornes dépassent 500 (règle du plugin homebridge),
+     * mireds sinon ; 2700-6500 K sans bornes.
+     */
+    private static function colorTempRange($_action, $_info) {
+        $min = $_action->getConfiguration('minValue');
+        $max = $_action->getConfiguration('maxValue');
+        $unit = strtoupper(trim($_action->getUnite() . (is_object($_info) ? $_info->getUnite() : '')));
+        if (!is_numeric($min) || !is_numeric($max) || $max <= $min) {
+            /* Sans bornes, la valeur actuelle tranche : au-delà de 1000, ce sont des kelvins. */
+            $current = is_object($_info) ? $_info->execCmd() : null;
+            if (strpos($unit, 'K') === false && is_numeric($current) && $current > 0 && $current <= 1000) {
+                return array('ctMin' => 153, 'ctMax' => 500, 'ctKelvin' => false);
+            }
+            return array('ctMin' => 2700, 'ctMax' => 6500, 'ctKelvin' => true);
+        }
+        $kelvin = strpos($unit, 'K') !== false || ($min > 500 && $max > 500);
+        return array('ctMin' => (float) $min, 'ctMax' => (float) $max, 'ctKelvin' => $kelvin);
+    }
+
+    /*
+     * Modes d'un thermostat : une action par mode (plugin thermostat officiel),
+     * ou une seule action « liste » (select) dont chaque valeur est un mode.
+     * Proposés par défaut : « arrêt » (logicalId off, ou nom Off / Arrêt) et
+     * « chauffage » (Confort, Chauffage, Manuel… sinon le premier autre mode).
+     */
+    private static function thermostatModes($_cmds) {
+        $list = array();
+        foreach ($_cmds as $cmd) {
+            if ($cmd->getType() != 'action' || $cmd->getGeneric_type() != 'THERMOSTAT_SET_MODE') {
+                continue;
+            }
+            if ($cmd->getSubType() == 'select') {
+                foreach (explode(';', (string) $cmd->getConfiguration('listValue')) as $entry) {
+                    if (trim($entry) === '') {
+                        continue;
+                    }
+                    $parts = explode('|', $entry, 2);
+                    $value = trim($parts[0]);
+                    $label = isset($parts[1]) ? trim($parts[1]) : $value;
+                    $list[] = array('key' => 'sel:' . $cmd->getId() . ':' . $value, 'label' => $label, 'cmd' => (int) $cmd->getId(), 'select' => $value, 'logicalId' => '');
+                }
+            } else {
+                $list[] = array('key' => 'cmd:' . $cmd->getId(), 'label' => $cmd->getName(), 'cmd' => (int) $cmd->getId(), 'select' => '', 'logicalId' => $cmd->getLogicalId());
+            }
+        }
+        $off = '';
+        $heat = '';
+        foreach ($list as $mode) {
+            if ($off == '' && (strtolower($mode['logicalId']) == 'off' || preg_match('/^(off|arr[eê]t|arr[eê]t[ée]|aus|stop)$/iu', trim($mode['label'])) || strtolower($mode['select']) == 'off')) {
+                $off = $mode['key'];
+            }
+        }
+        foreach ($list as $mode) {
+            /* « Arrêt chauffage », « Hors gel » : pas des modes de chauffe. */
+            if ($mode['key'] != $off && preg_match('/(confort|comfort|chauf|heat|manu|jour|day)/iu', $mode['label'])
+                && !preg_match('/(arr[eê]t|off|hors|stop)/iu', $mode['label'])) {
+                $heat = $mode['key'];
+                break;
+            }
+        }
+        if ($heat == '') {
+            foreach ($list as $mode) {
+                if ($mode['key'] != $off) {
+                    $heat = $mode['key'];
+                    break;
+                }
+            }
+        }
+        return array('list' => $list, 'off' => $off, 'heat' => $heat);
+    }
+
     /*
      * Ce qu'un équipement peut devenir, famille par famille : les commandes de
      * chaque rôle, les paramètres et le type proposé par défaut. Rien si
@@ -148,19 +249,35 @@ class matterhubbe extends eqLogic {
         if (is_object($slider) || (is_object($on) && is_object($off))) {
             $params = array();
             if (is_object($slider)) {
-                $params['levelMin'] = is_numeric($slider->getConfiguration('minValue')) ? (float) $slider->getConfiguration('minValue') : 0;
-                $params['levelMax'] = is_numeric($slider->getConfiguration('maxValue')) ? (float) $slider->getConfiguration('maxValue') : 100;
+                list($params['levelMin'], $params['levelMax']) = self::sliderRange($slider, 0, 100);
+            }
+            $kinds = is_object($slider) ? array('dimmable_light', 'onoff_light') : array('onoff_light');
+            $cmdsLight = array(
+                'state' => self::cmdId($state),
+                'level' => self::cmdId($level),
+                'on' => self::cmdId($on),
+                'off' => self::cmdId($off),
+                'setLevel' => self::cmdId($slider),
+            );
+
+            /* Couleur et température de couleur : seulement sur une lampe variable, Matter l'impose. */
+            $setColor = self::findCmd($cmds, 'LIGHT_SET_COLOR', 'action', 'color');
+            $setCt = self::findCmd($cmds, 'LIGHT_SET_COLOR_TEMP', 'action');
+            if (is_object($slider) && (is_object($setColor) || is_object($setCt))) {
+                array_unshift($kinds, 'color_light');
+                $cmdsLight['color'] = self::cmdId(self::findCmd($cmds, 'LIGHT_COLOR', 'info'));
+                $cmdsLight['setColor'] = self::cmdId($setColor);
+                $cmdsLight['colorTemp'] = self::cmdId(self::findCmd($cmds, 'LIGHT_COLOR_TEMP', 'info'));
+                $cmdsLight['setColorTemp'] = self::cmdId($setCt);
+                $params['hasColor'] = is_object($setColor);
+                if (is_object($setCt)) {
+                    $params = array_merge($params, self::colorTempRange($setCt, self::findCmd($cmds, 'LIGHT_COLOR_TEMP', 'info')));
+                }
             }
             $out['light'] = array(
-                'default' => is_object($slider) ? 'dimmable_light' : 'onoff_light',
-                'kinds' => is_object($slider) ? array('dimmable_light', 'onoff_light') : array('onoff_light'),
-                'cmds' => array(
-                    'state' => self::cmdId($state),
-                    'level' => self::cmdId($level),
-                    'on' => self::cmdId($on),
-                    'off' => self::cmdId($off),
-                    'setLevel' => self::cmdId($slider),
-                ),
+                'default' => $kinds[0],
+                'kinds' => $kinds,
+                'cmds' => $cmdsLight,
                 'params' => $params,
             );
         }
@@ -175,6 +292,82 @@ class matterhubbe extends eqLogic {
                 'kinds' => array('plug', 'onoff_light'),
                 'cmds' => array('state' => self::cmdId($state), 'on' => self::cmdId($on), 'off' => self::cmdId($off)),
                 'params' => array(),
+            );
+        }
+
+        /* Volet. Jeedom : 0 = fermé, 100 = ouvert, à l'échelle du curseur ; binaire 1 = ouvert. */
+        $state = self::findCmd($cmds, array('FLAP_STATE', 'FLAP_BSO_STATE'), 'info');
+        $slider = self::findLinkedAction($cmds, 'FLAP_SLIDER', $state);
+        $up = self::findLinkedAction($cmds, array('FLAP_UP', 'FLAP_BSO_UP'), $state);
+        $down = self::findLinkedAction($cmds, array('FLAP_DOWN', 'FLAP_BSO_DOWN'), $state);
+        $stop = self::findLinkedAction($cmds, 'FLAP_STOP', $state);
+        if (is_object($slider) || (is_object($up) && is_object($down))) {
+            $binary = is_object($state) && $state->getSubType() == 'binary';
+            $range = is_object($slider) ? self::sliderRange($slider, 0, 100)
+                : (is_object($state) && !$binary ? self::sliderRange($state, 0, 100) : array(0, 100));
+            $out['cover'] = array(
+                'default' => 'cover',
+                'kinds' => array('cover'),
+                'cmds' => array(
+                    'state' => self::cmdId($state),
+                    'up' => self::cmdId($up),
+                    'down' => self::cmdId($down),
+                    'stop' => self::cmdId($stop),
+                    'setLevel' => self::cmdId($slider),
+                ),
+                'params' => array(
+                    'levelMin' => $range[0],
+                    'levelMax' => $range[1],
+                    'stateBinary' => $binary,
+                    'invert' => $binary && $state->getDisplay('invertBinary') == 1,
+                ),
+                'invertable' => true,
+            );
+        }
+
+        /* Thermostat, chauffage seul : consigne obligatoire, modes facultatifs. */
+        $setSetpoint = self::findCmd($cmds, 'THERMOSTAT_SET_SETPOINT', 'action');
+        if (is_object($setSetpoint)) {
+            $setpoint = self::findCmd($cmds, 'THERMOSTAT_SETPOINT', 'info');
+            if (!is_object($setpoint) && is_numeric($setSetpoint->getValue())) {
+                $setpoint = cmd::byId($setSetpoint->getValue());
+            }
+            $temperature = self::findCmd($cmds, array('THERMOSTAT_TEMPERATURE', 'TEMPERATURE'), 'info');
+            $range = self::sliderRange($setSetpoint, 7, 30);
+            $step = $setSetpoint->getDisplay('parameters');
+            $modes = self::thermostatModes($cmds);
+            $out['thermostat'] = array(
+                'default' => 'thermostat',
+                'kinds' => array('thermostat'),
+                'cmds' => array(
+                    'temperature' => self::cmdId($temperature),
+                    'setpoint' => self::cmdId($setpoint),
+                    'setSetpoint' => self::cmdId($setSetpoint),
+                    'state' => self::cmdId(self::findCmd($cmds, 'THERMOSTAT_STATE', 'info')),
+                    'mode' => self::cmdId(self::findCmd($cmds, 'THERMOSTAT_MODE', 'info')),
+                ),
+                'params' => array(
+                    'setpointMin' => $range[0],
+                    'setpointMax' => $range[1],
+                    'setpointStep' => (is_array($step) && isset($step['step']) && is_numeric($step['step'])) ? (float) $step['step'] : 0.5,
+                ),
+                'modes' => $modes['list'],
+                'defaultOff' => $modes['off'],
+                'defaultHeat' => $modes['heat'],
+            );
+        }
+
+        /* Serrure : les deux actions sont exigées (une gâche qui ne sait qu'ouvrir n'est pas une serrure). */
+        $state = self::findCmd($cmds, 'LOCK_STATE', 'info');
+        $lock = self::findLinkedAction($cmds, 'LOCK_CLOSE', $state);
+        $unlock = self::findLinkedAction($cmds, 'LOCK_OPEN', $state);
+        if (is_object($lock) && is_object($unlock)) {
+            $out['lock'] = array(
+                'default' => 'lock',
+                'kinds' => array('lock'),
+                'cmds' => array('state' => self::cmdId($state), 'lock' => self::cmdId($lock), 'unlock' => self::cmdId($unlock)),
+                'params' => array('invert' => is_object($state) && $state->getDisplay('invertBinary') == 1),
+                'invertable' => true,
             );
         }
 
@@ -200,6 +393,7 @@ class matterhubbe extends eqLogic {
                 'kinds' => array($family),
                 'cmds' => array('value' => self::cmdId($cmd)),
                 'params' => $params,
+                'invertable' => $family == 'contact',
             );
         }
         return $out;
@@ -240,6 +434,12 @@ class matterhubbe extends eqLogic {
                     'isEnable' => (int) $eqLogic->getIsEnable(),
                     'default' => $info['default'],
                     'kinds' => $kinds,
+                    'invertable' => !empty($info['invertable']),
+                    'modes' => isset($info['modes']) ? array_map(function ($m) {
+                        return array('key' => $m['key'], 'label' => $m['label']);
+                    }, $info['modes']) : array(),
+                    'defaultOff' => isset($info['defaultOff']) ? $info['defaultOff'] : '',
+                    'defaultHeat' => isset($info['defaultHeat']) ? $info['defaultHeat'] : '',
                 );
             }
         }
@@ -317,6 +517,15 @@ class matterhubbe extends eqLogic {
             }
             $keys[$key] = true;
 
+            $params = $info['params'];
+            /* « Inverser » coché sur la ligne : s'ajoute à l'inversion déjà déclarée sur la commande. */
+            if (!empty($info['invertable']) && !empty($item['invert'])) {
+                $params['invert'] = empty($params['invert']);
+            }
+            if ($family == 'thermostat') {
+                $params = array_merge($params, self::resolveModes($info, $item));
+            }
+
             $devices[] = array(
                 'key' => $key,
                 'kind' => $kind,
@@ -327,10 +536,35 @@ class matterhubbe extends eqLogic {
                 'cmds' => array_filter($info['cmds'], function ($id) {
                     return $id !== null;
                 }),
-                'params' => (object) $info['params'],
+                'params' => (object) $params,
             );
         }
         return $devices;
+    }
+
+    /*
+     * Modes « arrêt » et « chauffage » d'un thermostat : choix de l'utilisateur
+     * s'il en a fait un, sinon ceux proposés par défaut. Vide = pas de mode.
+     */
+    private static function resolveModes($_info, $_item) {
+        $out = array('offMode' => null, 'heatMode' => null, 'offLabels' => array());
+        $byKey = array();
+        foreach ($_info['modes'] as $mode) {
+            $byKey[$mode['key']] = $mode;
+        }
+        foreach (array('off' => 'defaultOff', 'heat' => 'defaultHeat') as $which => $default) {
+            $key = isset($_item[$which . 'Mode']) ? (string) $_item[$which . 'Mode'] : $_info[$default];
+            if ($key === '' || !isset($byKey[$key])) {
+                continue;
+            }
+            $mode = $byKey[$key];
+            $out[$which . 'Mode'] = array('cmd' => $mode['cmd'], 'select' => $mode['select']);
+            if ($which == 'off') {
+                /* THERMOSTAT_MODE vaut le nom de l'action, ou la valeur ou le libellé de la liste. */
+                $out['offLabels'] = array_values(array_unique(array_filter(array($mode['label'], $mode['select']), 'strlen')));
+            }
+        }
+        return $out;
     }
 
     /*
@@ -360,10 +594,15 @@ class matterhubbe extends eqLogic {
             $devices = $bridge->buildDevices();
             foreach ($devices as $device) {
                 foreach ($device['cmds'] as $role => $cmdId) {
-                    if (in_array($role, array('on', 'off', 'setLevel'))) {
+                    if (in_array($role, self::ACTION_ROLES)) {
                         $actionIds[$cmdId] = true;
                     } else {
                         $infoIds[$cmdId] = true;
+                    }
+                }
+                foreach (array('offMode', 'heatMode') as $mode) {
+                    if (isset($device['params']->$mode['cmd'])) {
+                        $actionIds[(int) $device['params']->$mode['cmd']] = true;
                     }
                 }
             }
@@ -462,8 +701,16 @@ class matterhubbe extends eqLogic {
             throw new Exception(__('Commande introuvable :', __FILE__) . ' ' . $_cmdId);
         }
         $options = array();
-        if (is_array($_options) && isset($_options['slider']) && is_numeric($_options['slider'])) {
-            $options['slider'] = $_options['slider'];
+        if (is_array($_options)) {
+            if (isset($_options['slider']) && is_numeric($_options['slider'])) {
+                $options['slider'] = $_options['slider'];
+            }
+            if (isset($_options['color']) && preg_match('/^#[0-9a-f]{6}$/i', $_options['color'])) {
+                $options['color'] = strtolower($_options['color']);
+            }
+            if (isset($_options['select']) && is_scalar($_options['select'])) {
+                $options['select'] = (string) $_options['select'];
+            }
         }
         log::add(__CLASS__, 'debug', __('Google Home :', __FILE__) . ' ' . $cmd->getHumanName() . ' ' . json_encode($options));
         $cmd->execCmd($options);

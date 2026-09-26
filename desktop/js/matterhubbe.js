@@ -188,6 +188,7 @@ function matterhubbeRenderDevices() {
     } else {
       html += matterhubbeEscape(_c.kinds[0].label)
     }
+    html += matterhubbeOptionsHtml(_c, selected)
     html += '</td>'
     html += '<td><div><input class="form-control input-sm matterhubbeName" maxlength="32"></div></td>'
     tr.innerHTML = html
@@ -198,6 +199,38 @@ function matterhubbeRenderDevices() {
   })
   matterhubbeRefreshNames()
   matterhubbeFilter()
+}
+
+/*
+ * Options propres à certaines fonctions : sens inversé (volet, serrure,
+ * ouverture), et modes Jeedom qui répondent à « arrêt » et « chauffage » pour
+ * un thermostat.
+ */
+function matterhubbeOptionsHtml(_c, _selected) {
+  var html = ''
+  if (_c.invertable) {
+    var inverted = _selected && _selected.invert
+    html += '<label class="checkbox-inline" style="margin-top:4px;" title="{{À cocher si Google affiche l\'inverse de la réalité (ouvert au lieu de fermé, verrouillée au lieu d\'ouverte).}}">'
+      + '<input type="checkbox" class="matterhubbeInvert"' + (inverted ? ' checked' : '') + '> {{Inverser}}</label>'
+  }
+  if (_c.family === 'thermostat') {
+    var pick = function (_which, _label, _default) {
+      var current = (_selected && _selected[_which] !== undefined) ? _selected[_which] : _default
+      var out = '<div style="margin-top:4px;"><small>' + _label + '</small><select class="form-control input-sm matterhubbeMode" data-which="' + _which + '">'
+      out += '<option value=""' + (current === '' ? ' selected' : '') + '>{{Aucun}}</option>'
+      _c.modes.forEach(function (_m) {
+        out += '<option value="' + matterhubbeEscape(_m.key) + '"' + (_m.key === current ? ' selected' : '') + '>' + matterhubbeEscape(_m.label) + '</option>'
+      })
+      return out + '</select></div>'
+    }
+    if (_c.modes.length > 0) {
+      html += pick('offMode', '{{Mode « arrêt »}}', _c.defaultOff)
+      html += pick('heatMode', '{{Mode « chauffage »}}', _c.defaultHeat)
+    } else {
+      html += '<div class="help-block" style="margin:4px 0 0 0;">{{Aucun mode (THERMOSTAT_SET_MODE) : seule la consigne sera pilotable.}}</div>'
+    }
+  }
+  return html
 }
 
 function matterhubbeFilter() {
@@ -226,13 +259,19 @@ function matterhubbeReadRow(_tr) {
   } else {
     var kind = _tr.querySelector('.matterhubbeKind')
     var name = _tr.querySelector('.matterhubbeName')
+    var invert = _tr.querySelector('.matterhubbeInvert')
     var previous = matterhubbeSelection[key] || {}
-    matterhubbeSelection[key] = {
+    var item = Object.assign({}, previous, {
       eq_id: parseInt(_tr.getAttribute('data-eq_id')),
       family: _tr.getAttribute('data-family'),
       kind: kind ? kind.value : (previous.kind || ''),
       name: name ? name.value.trim() : (previous.name || '')
-    }
+    })
+    if (invert) { item.invert = invert.checked ? 1 : 0 }
+    _tr.querySelectorAll('.matterhubbeMode').forEach(function (_select) {
+      item[_select.getAttribute('data-which')] = _select.value
+    })
+    matterhubbeSelection[key] = item
   }
   matterhubbeUpdateCount()
 }
