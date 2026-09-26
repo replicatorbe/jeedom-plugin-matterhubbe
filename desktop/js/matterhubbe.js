@@ -38,15 +38,18 @@ function matterhubbeRowKey(_eqId, _family) {
 }
 
 /* domUtils.ajax signale déjà les erreurs réseau : pas de second message. */
-function matterhubbeAjax(_action, _data, _success) {
+function matterhubbeAjax(_action, _data, _success, _failure) {
   domUtils.ajax({
     type: 'POST',
     url: 'plugins/matterhubbe/core/ajax/matterhubbe.ajax.php',
     data: Object.assign({ action: _action }, _data || {}),
     dataType: 'json',
+    /* Le cœur affiche déjà l'erreur réseau : ici, seulement remettre la page d'aplomb. */
+    error: function () { if (_failure) { _failure() } },
     success: function (result) {
       if (result.state != 'ok') {
         jeedomUtils.showAlert({ message: result.result, level: 'danger' })
+        if (_failure) { _failure() }
         return
       }
       _success(result.result)
@@ -112,7 +115,14 @@ function matterhubbeRefreshNames() {
     var name = (input.value.trim() || input.getAttribute('placeholder') || '').toLowerCase()
     var duplicate = _tr.querySelector('.matterhubbeSelect').checked && names[name] > 1
     input.parentNode.classList.toggle('has-warning', duplicate)
-    input.title = duplicate ? '{{Un autre appareil exposé porte ce nom : Google ne saura pas lequel piloter.}}' : ''
+    var help = input.parentNode.querySelector('.matterhubbeNameHelp')
+    var tooLong = !input.value.trim() && (input.getAttribute('placeholder') || '').length > 32
+    var message = duplicate ? '{{Nom déjà utilisé par un autre appareil exposé : Google ne saura pas lequel piloter.}}'
+      : (tooLong ? '{{Nom par défaut trop long : il sera coupé à 32 caractères.}}' : '')
+    if (help) {
+      help.textContent = message
+      help.style.display = message ? '' : 'none'
+    }
   })
 }
 
@@ -120,6 +130,7 @@ function matterhubbeRenderDevices() {
   var tbody = document.getElementById('table_matterhubbeDevices').querySelector('tbody')
   tbody.innerHTML = ''
   if (matterhubbeCandidates === null) {
+    tbody.innerHTML = '<tr><td colspan="5"><i class="fas fa-spinner fa-spin"></i> {{Lecture des équipements…}}</td></tr>'
     return
   }
 
@@ -134,7 +145,7 @@ function matterhubbeRenderDevices() {
     ghost.setAttribute('data-family', s.family)
     ghost.setAttribute('data-search', '')
     ghost.innerHTML = '<td><input type="checkbox" class="matterhubbeSelect" checked></td>'
-      + '<td colspan="4"><i class="fas fa-exclamation-triangle"></i> ' + matterhubbeEscape(s.name || ('#' + s.eq_id))
+      + '<td colspan="4"><i class="fas fa-exclamation-triangle"></i> ' + matterhubbeEscape(s.name || s.label || ('{{Équipement}} #' + s.eq_id))
       + ' — {{cet équipement n\'existe plus ou n\'a plus les types génériques nécessaires : il n\'est plus envoyé à Google. Décochez-le pour le retirer.}}</td>'
     tbody.appendChild(ghost)
   }
@@ -170,7 +181,7 @@ function matterhubbeRenderDevices() {
     tr.setAttribute('data-object', _c.object)
     tr.setAttribute('data-search', (_c.humanName + ' ' + _c.plugin + ' ' + _c.familyLabel).toLowerCase())
 
-    var html = '<td><input type="checkbox" class="matterhubbeSelect"' + (selected ? ' checked' : '') + '></td>'
+    var html = '<td><input type="checkbox" class="matterhubbeSelect" aria-label="{{Exposer}} ' + matterhubbeEscape(_c.humanName + ' — ' + _c.familyLabel) + '"' + (selected ? ' checked' : '') + '></td>'
     html += '<td>' + matterhubbeEscape(_c.name)
     html += ' <span class="label label-default">' + matterhubbeEscape(_c.plugin) + '</span>'
     if (_c.isEnable != 1) {
@@ -180,7 +191,7 @@ function matterhubbeRenderDevices() {
     html += '<td>' + matterhubbeEscape(_c.familyLabel) + '</td>'
     html += '<td>'
     if (_c.kinds.length > 1) {
-      html += '<select class="form-control input-sm matterhubbeKind">'
+      html += '<select class="form-control input-sm matterhubbeKind" aria-label="{{Apparaît comme}}">'
       _c.kinds.forEach(function (_k) {
         html += '<option value="' + matterhubbeEscape(_k.kind) + '"' + (_k.kind === kind ? ' selected' : '') + '>' + matterhubbeEscape(_k.label) + '</option>'
       })
@@ -188,9 +199,11 @@ function matterhubbeRenderDevices() {
     } else {
       html += matterhubbeEscape(_c.kinds[0].label)
     }
-    html += matterhubbeOptionsHtml(_c, selected)
+    /* Options affichées seulement sur les lignes cochées : l'écran reste lisible, surtout sur téléphone. */
+    html += '<div class="matterhubbeOptions"' + (selected ? '' : ' style="display:none;"') + '>' + matterhubbeOptionsHtml(_c, selected) + '</div>'
     html += '</td>'
-    html += '<td><div><input class="form-control input-sm matterhubbeName" maxlength="32"></div></td>'
+    html += '<td><div><input class="form-control input-sm matterhubbeName" maxlength="32" aria-label="{{Nom dans Google Home}}">'
+      + '<span class="help-block matterhubbeNameHelp" style="display:none;margin:2px 0 0 0;"></span></div></td>'
     tr.innerHTML = html
     if (selected && selected.name) {
       tr.querySelector('.matterhubbeName').value = selected.name
@@ -216,12 +229,12 @@ function matterhubbeOptionsHtml(_c, _selected) {
   if (_c.family === 'thermostat') {
     var pick = function (_which, _label, _default) {
       var current = (_selected && _selected[_which] !== undefined) ? _selected[_which] : _default
-      var out = '<div style="margin-top:4px;"><small>' + _label + '</small><select class="form-control input-sm matterhubbeMode" data-which="' + _which + '">'
+      var out = '<div style="margin-top:4px;"><label style="font-weight:normal;margin:0;"><small>' + _label + '</small><select class="form-control input-sm matterhubbeMode" data-which="' + _which + '">'
       out += '<option value=""' + (current === '' ? ' selected' : '') + '>{{Aucun}}</option>'
       _c.modes.forEach(function (_m) {
         out += '<option value="' + matterhubbeEscape(_m.key) + '"' + (_m.key === current ? ' selected' : '') + '>' + matterhubbeEscape(_m.label) + '</option>'
       })
-      return out + '</select></div>'
+      return out + '</select></label></div>'
     }
     if (_c.modes.length > 0) {
       html += pick('offMode', '{{Mode « arrêt »}}', _c.defaultOff)
@@ -268,6 +281,8 @@ function matterhubbeReadRow(_tr) {
       name: name ? name.value.trim() : (previous.name || '')
     })
     if (invert) { item.invert = invert.checked ? 1 : 0 }
+    var candidate = matterhubbeFindCandidate(item.eq_id, item.family)
+    if (candidate) { item.label = candidate.humanName }
     _tr.querySelectorAll('.matterhubbeMode').forEach(function (_select) {
       item[_select.getAttribute('data-which')] = _select.value
     })
@@ -302,9 +317,10 @@ function matterhubbeRenderStatus(_status) {
   if (_status.dependancy !== 'ok') {
     div.innerHTML = '<div class="alert alert-warning">'
       + (_status.dependancy === 'in_progress'
-        ? '{{Installation des dépendances en cours (Node.js et la bibliothèque Matter). Cela peut prendre une vingtaine de minutes.}}'
+        ? '<i class="fas fa-spinner fa-spin"></i> {{Installation des dépendances en cours (Node.js et la bibliothèque Matter) : jusqu\'à une vingtaine de minutes. Cette page se met à jour toute seule.}}'
         : '{{Les dépendances ne sont pas installées : Plugins → Gestion des plugins → Matter Hub → Dépendances → Relancer.}}')
       + '</div>'
+    matterhubbeSchedulePoll(15000)
     return
   }
   if (_status.daemon !== 'ok') {
@@ -314,15 +330,17 @@ function matterhubbeRenderStatus(_status) {
     }
     html += '</div>'
     if (_status.launchable === 'ok') {
-      html += '<a class="btn btn-success btn-sm" id="bt_matterhubbeStartDaemon"><i class="fas fa-play"></i> {{Démarrer le démon}}</a>'
+      html += '<a class="btn btn-success btn-sm" id="bt_matterhubbeStartDaemon" role="button" tabindex="0"><i class="fas fa-play"></i> {{Démarrer le démon}}</a>'
     }
     div.innerHTML = html
+    matterhubbeSchedulePoll(15000)
     return
   }
   if (!_status.inDaemon) {
     if (_status.error) {
       div.innerHTML = '<div class="alert alert-danger">{{Le pont n\'a pas pu démarrer :}} ' + matterhubbeEscape(_status.error)
-        + '<br>{{Nouvel essai automatique chaque minute. Si le port est pris par un autre logiciel, changez-le à gauche.}}</div>'
+        + '<br>{{Nouvel essai automatique chaque minute. Si le port est pris, changez le champ « Port Matter » puis enregistrez.}}</div>'
+      matterhubbeSchedulePoll(15000)
     } else {
       div.innerHTML = '<span class="help-block"><i class="fas fa-spinner fa-spin"></i> {{Démarrage du pont…}}</span>'
       matterhubbeSchedulePoll(3000)
@@ -342,30 +360,37 @@ function matterhubbeRenderStatus(_status) {
     html += '<li>{{« Appareil non certifié » : c\'est normal, confirmez l\'ajout.}}</li>'
     html += '</ol>'
   } else {
-    html += '<div class="alert alert-success">{{Pont appairé.}} ' + fabrics.length + ' {{contrôleur(s) :}} '
+    html += '<div class="alert alert-success"><i class="fas fa-check"></i> {{Appairé avec :}} '
     html += fabrics.map(function (_f) {
       return matterhubbeEscape(matterhubbeVendor(_f.vendorId) + (_f.label ? ' (' + _f.label + ')' : ''))
     }).join(', ')
+    html += '<br><small>{{Dans l\'application Google Home, rangez chaque appareil dans sa pièce, puis essayez : « Ok Google, allume le plafonnier du salon ».}}</small>'
     html += '</div>'
+    if (_status.commissioningOpen) {
+      html += '<div class="alert alert-info"><i class="fas fa-door-open"></i> {{Appairage ouvert : le code ci-dessous est utilisable pendant 15 minutes.}}</div>'
+    }
   }
   html += '<div style="display:flex;gap:20px;align-items:center;flex-wrap:wrap;">'
   if (_status.qrSvg) {
-    var img = 'data:image/svg+xml;base64,' + btoa(_status.qrSvg)
-    html += '<img src="' + img + '" alt="QR code" style="width:200px;height:200px;image-rendering:pixelated;'
-      + (_status.commissioned ? 'opacity:0.3;' : '') + '">'
+    var dim = _status.commissioned && !_status.commissioningOpen
+    var img = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(_status.qrSvg)
+    html += '<img src="' + img + '" alt="{{QR code d\'appairage Matter}}" style="width:200px;height:200px;image-rendering:pixelated;'
+      + (dim ? 'opacity:0.3;' : '') + '">'
   }
   html += '<div>'
   html += '<div>{{Code manuel}}</div>'
-  html += '<div style="font-size:24px;font-family:monospace;letter-spacing:2px;' + (_status.commissioned ? 'opacity:0.4;' : '') + '">'
+  html += '<div style="font-size:24px;font-family:monospace;letter-spacing:2px;' + (dim ? 'opacity:0.4;' : '') + '">'
     + matterhubbeEscape(matterhubbeFormatCode(_status.manualPairingCode)) + '</div>'
   html += '<div class="help-block">{{Port}} ' + parseInt(_status.port) + ' — ' + parseInt(_status.devices) + ' {{appareil(s) exposé(s)}}</div>'
-  if (_status.commissioned) {
-    html += '<div class="help-block">{{Code utilisable seulement après « Ouvrir l\'appairage » (15 minutes) : pour réappairer Google ou ajouter un second contrôleur.}}</div>'
-    html += '<a class="btn btn-default btn-sm" id="bt_matterhubbeOpenCommissioning"><i class="fas fa-door-open"></i> {{Ouvrir l\'appairage}}</a>'
+  if (_status.commissioned && !_status.commissioningOpen) {
+    html += '<div class="help-block">{{Pour réappairer Google ou ajouter un autre contrôleur, autorisez d\'abord un nouvel appairage (15 minutes).}}</div>'
+    html += '<a class="btn btn-default btn-sm" id="bt_matterhubbeOpenCommissioning" role="button" tabindex="0"><i class="fas fa-door-open"></i> {{Autoriser un nouvel appairage}}</a>'
   }
   html += '</div></div>'
-  html += '<hr><a class="btn btn-danger btn-xs pull-right" id="bt_matterhubbeFactoryReset"><i class="fas fa-eraser"></i> {{Réinitialiser le pont}}</a>'
-  html += '<span class="help-block">{{La réinitialisation oublie Google et génère un nouveau code : à réserver aux cas désespérés.}}</span>'
+  if (_status.commissioned) {
+    html += '<hr><a class="btn btn-danger btn-xs pull-right" id="bt_matterhubbeFactoryReset" role="button" tabindex="0"><i class="fas fa-eraser"></i> {{Réinitialiser le pont}}</a>'
+    html += '<span class="help-block">{{La réinitialisation oublie Google et génère un nouveau code : en dernier recours seulement.}}</span>'
+  }
   div.innerHTML = html
 
   /* En attente d'appairage : la page passe d'elle-même à « Appairé » après le scan. */
@@ -408,6 +433,11 @@ function matterhubbeLoadStatus() {
     if (id == matterhubbeBridgeId) {
       matterhubbeRenderStatus(_status)
     }
+  }, function () {
+    if (id == matterhubbeBridgeId) {
+      document.getElementById('div_matterhubbeStatus').innerHTML = '<div class="alert alert-warning">{{État du pont illisible.}} '
+        + '<a class="btn btn-default btn-xs" id="bt_matterhubbeRetry" role="button" tabindex="0"><i class="fas fa-sync"></i> {{Réessayer}}</a></div>'
+    }
   })
 }
 
@@ -445,8 +475,10 @@ function printEqLogic(_eqLogic) {
   only.classList.add('btn-default')
 
   matterhubbeUpdateCount()
-  document.getElementById('div_matterhubbeStatus').innerHTML = '<span class="help-block">{{Lecture de l\'état du pont…}}</span>'
+  document.getElementById('div_matterhubbeStatus').innerHTML = '<span class="help-block"><i class="fas fa-spinner fa-spin"></i> {{Lecture de l\'état du pont…}}</span>'
   matterhubbeLoadStatus()
+  /* Après un enregistrement, la page est rechargée avant que le démon ait relu la configuration : seconde lecture. */
+  matterhubbeSchedulePoll(4000)
   if (matterhubbeCandidates === null) {
     matterhubbeLoadCandidates()
   } else {
@@ -458,8 +490,6 @@ function printEqLogic(_eqLogic) {
 function saveEqLogic(_eqLogic) {
   document.querySelectorAll('#table_matterhubbeDevices tr.matterhubbeDevice').forEach(matterhubbeReadRow)
   _eqLogic.configuration.devices = Object.values(matterhubbeSelection)
-  /* Le démon relit la configuration une fois l'enregistrement fini : on guette le résultat. */
-  matterhubbeSchedulePoll(3000)
   return _eqLogic
 }
 
@@ -495,6 +525,10 @@ function addCmdToTable(_cmd) {
   document.getElementById('table_cmd').querySelector('tbody').appendChild(newRow)
   newRow.setJeeValues(_cmd, '.cmdAttr')
   jeedom.cmd.changeType(newRow, init(_cmd.subType))
+  /* Commandes créées par le plugin : leur type ne se change pas. */
+  newRow.querySelectorAll('.cmdAttr[data-l1key="type"], .cmdAttr[data-l1key="subType"]').forEach(function (_select) {
+    _select.disabled = true
+  })
 }
 
 /* ------------------------------------------------------------ écouteurs */
@@ -517,7 +551,7 @@ window.matterhubbeOnClick = function (_event) {
     matterhubbeSchedulePoll(300)
     return
   }
-  if (target.closest('#bt_matterhubbeRefresh') !== null) {
+  if (target.closest('#bt_matterhubbeRefresh') !== null || target.closest('#bt_matterhubbeRetry') !== null) {
     _event.preventDefault()
     matterhubbeLoadStatus()
     return
@@ -555,10 +589,18 @@ window.matterhubbeOnClick = function (_event) {
   }
   if (target.closest('#bt_matterhubbeStartDaemon') !== null) {
     _event.preventDefault()
+    var startButton = target.closest('#bt_matterhubbeStartDaemon')
+    if (startButton.classList.contains('disabled')) { return }
+    startButton.classList.add('disabled')
+    startButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> {{Démarrage…}}'
     jeedom.plugin.deamonStart({
       id: 'matterhubbe',
       forceRestart: 1,
-      success: function () { matterhubbeSchedulePoll(3000) }
+      error: function (error) {
+        jeedomUtils.showAlert({ message: error.message, level: 'danger' })
+        matterhubbeLoadStatus()
+      },
+      success: function () { matterhubbeSchedulePoll(2000) }
     })
     return
   }
@@ -566,7 +608,7 @@ window.matterhubbeOnClick = function (_event) {
     _event.preventDefault()
     matterhubbeAjax('openCommissioning', { id: matterhubbeBridgeId }, function (_message) {
       jeedomUtils.showAlert({ message: _message || '{{Appairage ouvert pour 15 minutes : ajoutez le pont depuis l\'application avec le code affiché.}}', level: 'success' })
-      matterhubbeLoadStatus()
+      matterhubbeSchedulePoll(1500)
     })
     return
   }
@@ -585,6 +627,10 @@ window.matterhubbeOnClick = function (_event) {
 window.matterhubbeOnChange = function (_event) {
   var tr = _event.target.closest('#table_matterhubbeDevices tr.matterhubbeDevice')
   if (tr === null) { return }
+  if (_event.target.classList.contains('matterhubbeSelect')) {
+    var options = tr.querySelector('.matterhubbeOptions')
+    if (options) { options.style.display = _event.target.checked ? '' : 'none' }
+  }
   matterhubbeReadRow(tr)
   matterhubbeMarkModified()
   matterhubbeRefreshNames()
@@ -610,6 +656,17 @@ window.matterhubbeOnInput = function (_event) {
   }
 }
 
+/* Nos boutons sont des liens sans adresse : Entrée et Espace les déclenchent comme un clic. */
+if (window.matterhubbeOnKey) {
+  matterhubbeContainer.removeEventListener('keydown', window.matterhubbeOnKey)
+}
+window.matterhubbeOnKey = function (_event) {
+  if ((_event.key === 'Enter' || _event.key === ' ') && _event.target.matches('[id^="bt_matterhubbe"][role="button"]')) {
+    _event.preventDefault()
+    _event.target.click()
+  }
+}
+matterhubbeContainer.addEventListener('keydown', window.matterhubbeOnKey)
 matterhubbeContainer.addEventListener('click', window.matterhubbeOnClick)
 matterhubbeContainer.addEventListener('change', window.matterhubbeOnChange)
 matterhubbeContainer.addEventListener('input', window.matterhubbeOnInput)

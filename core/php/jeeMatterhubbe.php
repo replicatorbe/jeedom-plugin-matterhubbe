@@ -27,8 +27,17 @@
 
 require_once __DIR__ . '/../../../../core/php/core.inc.php';
 
-/* 401 et non 200 sur refus : le démon ne dispose que de la réponse pour savoir s'il a été entendu. */
-if (!jeedom::apiAccess(init('apikey'), 'matterhubbe')) {
+/*
+ * Seule la clé du plugin est acceptée : jeedom::apiAccess() accepterait aussi
+ * la clé de n'importe quel utilisateur, qui pourrait alors piloter les
+ * équipements exposés. Le démon l'envoie en en-tête, pour qu'elle ne finisse
+ * pas dans le journal d'accès d'Apache. 401 sur refus : le démon ne dispose
+ * que de la réponse pour savoir s'il a été entendu.
+ */
+$apikey = isset($_SERVER['HTTP_X_MATTERHUBBE_KEY']) ? (string) $_SERVER['HTTP_X_MATTERHUBBE_KEY'] : (string) init('apikey');
+$expected = (string) jeedom::getApiKey('matterhubbe');
+if ($expected === '' || !hash_equals($expected, $apikey)
+    || !jeedom::apiModeResult(config::byKey('api::matterhubbe::mode', 'core', 'localhost'))) {
     http_response_code(401);
     echo 'Not authorized';
     die();

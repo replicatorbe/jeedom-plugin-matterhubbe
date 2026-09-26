@@ -13,7 +13,12 @@ appareil Matter qui en contient d'autres, un par équipement Jeedom exposé.
   (2ᵉ génération ou Max), Nest Mini, Nest Audio, Chromecast avec Google TV,
   Google TV Streamer, Nest Wifi Pro… C'est lui qui parle au pont en local.
 - Le **multicast (mDNS) et l'IPv6 local** doivent passer entre Jeedom et le hub :
-  même réseau, pas de VLAN séparé ni d'isolation Wi-Fi.
+  même réseau, pas de VLAN séparé ni d'isolation Wi-Fi. Le téléphone qui sert
+  à l'appairage doit être sur ce même Wi-Fi.
+- Un accès à internet pendant l'installation des dépendances (NodeSource et
+  npm). Ensuite, tout fonctionne en local.
+- **Raspberry Pi** : Pi 2 ou plus récent (ARMv7 ou 64 bits). Node.js 22
+  n'existe pas pour les Pi Zero et Pi 1 (ARMv6).
 - Le plugin installe **Node.js** (20.19 ou plus récent, 22 de préférence) et la
   bibliothèque matter.js par le mécanisme de dépendances de Jeedom. Comptez
   jusqu'à une vingtaine de minutes. Le démon refuse de démarrer, avec un message
@@ -35,14 +40,16 @@ tant qu'il n'est pas déclaré dans votre compte développeur, ce qui est gratui
    `0x8000`** ; comme type d'appareil, choisissez un pont (« Bridge ») s'il est
    proposé, sinon n'importe lequel. Enregistrez.
 
-Rien d'autre n'est à faire dans la console : tout reste local ensuite.
+Rien d'autre n'est à faire dans la console : tout reste local ensuite. Si
+cette étape est oubliée, l'application Google Home échoue à l'ajout avec un
+message du type « Impossible d'ajouter l'appareil », sans autre explication.
 
 ## Mise en route
 
 1. **Plugins → Gestion des plugins → Matter Hub** : activez le plugin. Les
    dépendances (Node.js 22 et matter.js) s'installent d'elles-mêmes, et un pont
    « Jeedom » est créé : un seul suffit pour Google Home. Le démon démarre
-   seul à la fin de l'installation.
+   seul, une minute environ après la fin de l'installation.
 2. Sur la page du plugin, ouvrez le pont « Jeedom ».
 3. Onglet **Appareils exposés** : cochez les équipements à envoyer à Google,
    choisissez éventuellement le type (un relais qui commande un plafonnier sera
@@ -50,6 +57,7 @@ Rien d'autre n'est à faire dans la console : tout reste local ensuite.
 4. Onglet **Pont** : le QR code et le code à 11 chiffres apparaissent.
 5. Dans l'application **Google Home** : **Ajouter → Appareil Matter**, scannez
    le QR code, puis rangez les appareils dans vos pièces.
+6. Essayez : « Ok Google, allume le plafonnier du salon ».
 
 Ajouter ou retirer un équipement plus tard ne demande pas de réappairer :
 enregistrez le pont, l'appareil apparaît ou disparaît dans Google Home. Un
@@ -77,10 +85,10 @@ Le type d'appareil est déduit des **types génériques** des commandes
 |---|---|
 | `LIGHT_ON` + `LIGHT_OFF` (+ `LIGHT_STATE` / `LIGHT_STATE_BOOL`) | Lumière |
 | … + `LIGHT_SLIDER` (+ `LIGHT_BRIGHTNESS`) | Lumière variable |
-| … + `LIGHT_SET_COLOR` (+ `LIGHT_COLOR`) et/ou `LIGHT_SET_COLOR_TEMP` (+ `LIGHT_COLOR_TEMP`) | Lumière couleur |
+| … + `LIGHT_SET_COLOR` (+ `LIGHT_COLOR`) et/ou `LIGHT_SET_COLOR_TEMP` (+ `LIGHT_COLOR_TEMP`), avec un `LIGHT_SLIDER` | Lumière couleur ou à blanc réglable |
 | `ENERGY_ON` + `ENERGY_OFF` (+ `ENERGY_STATE`) | Prise, ou Lumière au choix |
-| `FLAP_UP` + `FLAP_DOWN` et/ou `FLAP_SLIDER` (+ `FLAP_STATE`, `FLAP_STOP`) | Volet |
-| `THERMOSTAT_SET_SETPOINT` (+ `THERMOSTAT_SETPOINT`, `THERMOSTAT_TEMPERATURE`, `THERMOSTAT_STATE`, `THERMOSTAT_MODE`, `THERMOSTAT_SET_MODE`) | Thermostat (chauffage) |
+| `FLAP_UP` + `FLAP_DOWN` et/ou `FLAP_SLIDER` (+ `FLAP_STATE`, `FLAP_STOP` ; variantes `FLAP_BSO_*`) | Volet |
+| `THERMOSTAT_SET_SETPOINT` (+ `THERMOSTAT_SETPOINT`, `THERMOSTAT_TEMPERATURE` ou `TEMPERATURE`, `THERMOSTAT_STATE`, `THERMOSTAT_MODE`, `THERMOSTAT_SET_MODE`) | Thermostat (chauffage) |
 | `LOCK_CLOSE` + `LOCK_OPEN` (+ `LOCK_STATE`) | Serrure |
 | `OPENING`, `OPENING_WINDOW` | Capteur d'ouverture |
 | `PRESENCE` | Capteur de présence |
@@ -102,7 +110,7 @@ température + humidité apparaît comme deux capteurs.
 - **Modules à plusieurs relais** : une seule sortie par équipement est exposée
   (celle dont les commandes sont liées à l'info d'état).
 - **Volets** : Jeedom compte 0 = fermé et 100 = ouvert, à l'échelle du curseur
-  (`FLAP_SLIDER`, 0-99 compris) ; un état binaire vaut 1 = ouvert. « Tout ouvrir »
+  (un curseur 0-99 est aussi accepté) ; un état binaire vaut 1 = ouvert. « Tout ouvrir »
   et « tout fermer » passent par les boutons haut/bas, une position
   intermédiaire par le curseur. Sans curseur, une position devient « ouvrir »
   ou « fermer ». Case « Inverser » si Google montre l'inverse.
@@ -112,11 +120,26 @@ température + humidité apparaît comme deux capteurs.
   « arrêt » et « chauffage » de Google : proposés d'office (Off / Confort…),
   modifiables par appareil. Eco, Hors-gel… n'ont pas d'équivalent Google.
 - **Serrures** : `LOCK_STATE` à 1 = verrouillée ; les deux actions sont exigées
-  (une gâche qui ne sait qu'ouvrir n'est pas proposée). Google ne permet pas de
-  déverrouiller à la voix : le déverrouillage se fait depuis l'application.
+  (une gâche qui ne sait qu'ouvrir n'est pas proposée). Selon les réglages de
+  Google, le déverrouillage à la voix peut être refusé ou demander une
+  confirmation : l'application, elle, déverrouille toujours.
 - **Couleur** : `#rrggbb` côté Jeedom ; la luminosité reste celle de la lampe.
+  Il faut un curseur de luminosité (`LIGHT_SLIDER`), Matter l'impose.
   Température de couleur en kelvins (unité « K » ou bornes au-delà de 500),
-  en mireds sinon.
+  en mireds si les bornes sont petites ; sans bornes, 2700-6500 K. Une lampe
+  couleur sans commande de blanc reçoit le blanc demandé comme une couleur.
+
+## Options par appareil
+
+Dans l'onglet « Appareils exposés », une fois la ligne cochée :
+
+- **Apparaît comme** : le type d'appareil dans Google (un relais en Lumière
+  plutôt qu'en Prise, une lampe couleur en simple lampe variable…).
+- **Inverser** (ouvertures, volets, serrures) : si Google montre l'inverse de
+  la réalité. S'ajoute à l'option « Inverser » de la commande Jeedom.
+- **Mode « arrêt » / Mode « chauffage »** (thermostats) : les modes Jeedom
+  déclenchés quand on éteint ou rallume le thermostat depuis Google.
+  « Aucun » : Google ne peut pas l'éteindre.
 
 ## Plusieurs contrôleurs, réappairage
 

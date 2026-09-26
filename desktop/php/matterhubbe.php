@@ -43,13 +43,14 @@ $eqLogics = eqLogic::byType($plugin->getId());
 			} else {
 				echo '<li>{{Installez les dépendances : bouton « Configuration » ci-dessus, puis « Relancer » dans le cadre Dépendances.}}</li>';
 			}
-			echo '<li>{{Déclarez le pont, une seule fois et gratuitement, dans la}} <a href="https://console.home.google.com/" target="_blank" rel="noopener">Google Home Developer Console</a>{{, avec le compte Google de la maison : projet → Add Matter integration, Vendor ID 0xFFF1, Product ID 0x8000. Sans cela, Google refuse l\'appareil.}}</li>';
+			echo '<li>{{Déclarez le pont, une seule fois et gratuitement, dans la Google Home Developer Console (site en anglais), avec le compte Google de la maison : projet → Add Matter integration, Vendor ID 0xFFF1, Product ID 0x8000. Sans cela, Google refuse l\'appareil.}} <a href="https://console.home.google.com/" target="_blank" rel="noopener"><i class="fas fa-external-link-alt"></i> console.home.google.com</a></li>';
 			if (count($eqLogics) == 0) {
 				echo '<li>{{Cliquez sur « Ajouter un pont » : un seul suffit pour Google Home.}}</li>';
 			} else {
 				echo '<li>{{Ouvrez le pont ci-dessous, onglet « Appareils exposés » : cochez les équipements à envoyer vers Google, puis enregistrez.}}</li>';
 			}
-			echo '<li>{{Onglet « Pont » : dans l\'application Google Home, Ajouter → Appareil Matter, puis scannez le QR code.}}</li>';
+			echo '<li>{{Onglet « Pont » : dans l\'application Google Home (téléphone sur le même Wi-Fi que le hub Google), Ajouter → Appareil Matter, puis scannez le QR code.}}</li>';
+			echo '<li>{{Rangez les appareils dans leurs pièces, puis essayez : « Ok Google, allume le plafonnier du salon ».}}</li>';
 			echo '</ol>';
 			echo '</div>';
 		}
@@ -77,7 +78,7 @@ $eqLogics = eqLogic::byType($plugin->getId());
 					echo '<br><span class="label ' . ($paired ? 'label-success' : 'label-warning') . '">'
 					   . ($paired ? '{{Appairé}}' : '{{Non appairé}}') . '</span>';
 				}
-				echo ' <span class="label label-default">' . count($eqLogic->getSelection()) . '</span>';
+				echo ' <span class="label label-default">' . count($eqLogic->getSelection()) . ' {{appareil(s)}}</span>';
 			}
 			echo '<span class="hiddenAsCard displayTableRight hidden">';
 			echo '<span class="label label-info">{{Port}} ' . (int) $eqLogic->getConfiguration('port') . '</span> ';
@@ -166,7 +167,7 @@ $eqLogics = eqLogic::byType($plugin->getId());
 								<i class="fas fa-qrcode"></i> {{Appairage}}
 								<a class="btn btn-default btn-xs pull-right" id="bt_matterhubbeRefresh"><i class="fas fa-sync"></i> {{Actualiser}}</a>
 							</legend>
-							<div id="div_matterhubbeStatus">
+							<div id="div_matterhubbeStatus" aria-live="polite">
 								<span class="help-block">{{Enregistrez le pont : le code d'appairage apparaît ici quand le démon l'a démarré.}}</span>
 							</div>
 						</fieldset>
@@ -186,10 +187,10 @@ $eqLogics = eqLogic::byType($plugin->getId());
 					<div class="input-group" style="margin-bottom:10px;">
 						<input class="form-control roundedLeft" placeholder="{{Filtrer par nom, objet, plugin ou fonction}}" id="in_matterhubbeFilter">
 						<span class="input-group-btn">
-							<a class="btn btn-default" id="bt_matterhubbeCheckVisible" title="{{Cocher les lignes affichées}}"><i class="far fa-check-square"></i></a>
-							<a class="btn btn-default" id="bt_matterhubbeUncheckVisible" title="{{Décocher les lignes affichées}}"><i class="far fa-square"></i></a>
+							<a class="btn btn-default" id="bt_matterhubbeCheckVisible" title="{{Cocher les lignes affichées}}" aria-label="{{Cocher les lignes affichées}}"><i class="far fa-check-square"></i></a>
+							<a class="btn btn-default" id="bt_matterhubbeUncheckVisible" title="{{Décocher les lignes affichées}}" aria-label="{{Décocher les lignes affichées}}"><i class="far fa-square"></i></a>
 							<a class="btn btn-default" id="bt_matterhubbeOnlySelected" data-state="0" title="{{Afficher seulement les appareils cochés}}"><i class="fas fa-filter"></i> {{Cochés}}</a>
-							<a class="btn btn-default roundedRight" id="bt_matterhubbeReloadCandidates" title="{{Relire les équipements}}"><i class="fas fa-sync"></i></a>
+							<a class="btn btn-default roundedRight" id="bt_matterhubbeReloadCandidates" title="{{Relire les équipements}}" aria-label="{{Relire les équipements}}"><i class="fas fa-sync"></i></a>
 						</span>
 					</div>
 					<div class="table-responsive">

@@ -213,6 +213,8 @@ export class Bridge {
             out.qrPairingCode = commissioning.pairingCodes?.qrPairingCode ?? "";
             out.manualPairingCode = commissioning.pairingCodes?.manualPairingCode ?? "";
             out.qrSvg = qrSvg(out.qrPairingCode);
+            /* Fenêtre d'appairage ouverte (« Ouvrir l'appairage ») : le code est utilisable en ce moment. */
+            out.commissioningOpen = (this.#server.state.administratorCommissioning?.windowStatus ?? 0) !== 0;
             out.fabrics = fabrics.map(f => ({ index: f.fabricIndex, vendorId: f.vendorId, label: f.label }));
         } catch (error) {
             log.debug(`${this.label} : état illisible :`, error);

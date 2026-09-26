@@ -19,7 +19,6 @@ export class JeedomLink {
 
     #url(params) {
         const url = new URL(this.#callback);
-        url.searchParams.set("apikey", this.#apikey);
         for (const [key, value] of Object.entries(params)) {
             url.searchParams.set(key, String(value));
         }
@@ -27,17 +26,32 @@ export class JeedomLink {
     }
 
     async #request(params, body, timeoutMs) {
-        const response = await fetch(this.#url(params), {
-            method: body === undefined ? "GET" : "POST",
-            headers: body === undefined ? {} : { "Content-Type": "application/json" },
-            body: body === undefined ? undefined : JSON.stringify(body),
-            signal: AbortSignal.timeout(timeoutMs),
-        });
+        let response;
+        try {
+            response = await this.#fetch(params, body, timeoutMs);
+        } catch (error) {
+            /* « fetch failed » seul ne dit rien : la vraie cause (ECONNREFUSED, délai…) est dans error.cause. */
+            const cause = error?.cause?.code ?? error?.cause?.message;
+            throw new Error(cause ? `${error.message} (${cause})` : error.message);
+        }
         const text = await response.text();
         if (!response.ok) {
             throw new Error(`HTTP ${response.status} : ${text.slice(0, 200)}`);
         }
         return text;
+    }
+
+    #fetch(params, body, timeoutMs) {
+        return fetch(this.#url(params), {
+            method: body === undefined ? "GET" : "POST",
+            /* La clé en en-tête, pas dans l'URL : elle finirait dans le journal d'accès d'Apache. */
+            headers: {
+                "X-Matterhubbe-Key": this.#apikey,
+                ...(body === undefined ? {} : { "Content-Type": "application/json" }),
+            },
+            body: body === undefined ? undefined : JSON.stringify(body),
+            signal: AbortSignal.timeout(timeoutMs),
+        });
     }
 
     async #json(params, body, timeoutMs) {

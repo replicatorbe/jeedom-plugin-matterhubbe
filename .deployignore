@@ -13,3 +13,4 @@
 
 # Contrôles de développement.
 /tests/
+/core/i18n/

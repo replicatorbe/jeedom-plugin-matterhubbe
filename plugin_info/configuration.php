@@ -28,7 +28,7 @@ if (!isConnect('admin')) {
 		<div class="form-group">
 			<label class="col-lg-4 control-label">{{Port des ordres}}</label>
 			<div class="col-lg-2">
-				<input class="configKey form-control" data-l1key="socketport" />
+				<input class="configKey form-control" data-l1key="socketport" placeholder="55064" />
 			</div>
 			<div class="col-lg-6">
 				<span class="help-block">{{Port local par lequel Jeedom transmet ses ordres au démon. À changer seulement si ce port est déjà pris sur la machine.}}</span>

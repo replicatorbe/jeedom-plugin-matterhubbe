@@ -43,7 +43,7 @@ import { ExtendedColorLightDevice } from "@matter/main/devices/extended-color-li
 import { ThermostatDevice } from "@matter/main/devices/thermostat";
 import { WindowCoveringDevice } from "@matter/main/devices/window-covering";
 import { hasLocalActor } from "@matter/main/protocol";
-import { hsToRgb, kelvinToMireds, miredsToKelvin, parseHex, rgbToHs, rgbToXy, toHex, xyToRgb } from "./color.js";
+import { hsToRgb, kelvinToMireds, kelvinToRgb, miredsToKelvin, parseHex, rgbToHs, rgbToXy, toHex, xyToRgb } from "./color.js";
 import { log } from "./log.js";
 
 /*
@@ -488,6 +488,13 @@ export class Device {
     #lastOnLevel = 254;
     #coverTarget = null;
     #coverTimer = null;
+    /* Posé quand l'objet est remplacé ou arrêté : il ne doit plus rien écrire sur l'endpoint. */
+    #retired = false;
+    #afterExec = null;
+    /* Ordres vers Jeedom : un à la fois, et pour une même commande seul le dernier en attente part. */
+    #execChain = Promise.resolve();
+    #pendingExec = new Map();
+    #lastJob = null;
     #values = new Map();
 
     constructor(spec, link) {
@@ -613,7 +620,7 @@ export class Device {
      */
     #later(state) {
         setTimeout(() => {
-            if (this.endpoint) this.#enqueue(() => this.endpoint.set(state));
+            if (this.endpoint && !this.#retired) this.#enqueue(() => this.endpoint.set(state));
         }, 300);
     }
 
@@ -641,6 +648,8 @@ export class Device {
     }
 
     unregister() {
+        this.#retired = true;
+        clearTimeout(this.#coverTimer);
         if (this.endpoint && registry.get(this.endpoint) === this) {
             registry.delete(this.endpoint);
         }
@@ -658,7 +667,7 @@ export class Device {
     applyValue(cmdId, value) {
         const key = String(cmdId);
         const roles = this.roles.get(key);
-        if (!roles || !this.endpoint) return;
+        if (!roles || !this.endpoint || this.#retired) return;
         this.#values.set(key, value);
         const state = {};
         for (const role of roles) {
@@ -673,6 +682,7 @@ export class Device {
 
     /* Remet dans Matter les dernières valeurs Jeedom, après une commande refusée. */
     #restore() {
+        if (this.#retired) return;
         for (const [cmdId, value] of this.#values) {
             this.applyValue(cmdId, value);
         }
@@ -682,18 +692,45 @@ export class Device {
         return Date.now() - this.#lastOff < OFF_SUPPRESSION_MS;
     }
 
-    /* Exécution d'une commande Jeedom, sans faire attendre le contrôleur Matter. */
+    /*
+     * Exécution d'une commande Jeedom, sans faire attendre le contrôleur
+     * Matter. Les ordres d'un appareil partent un par un, dans l'ordre ; si le
+     * même ordre est déjà en attente (curseur que l'on fait glisser), seule la
+     * dernière valeur part. Renvoie une promesse : true si Jeedom a accepté.
+     */
     #exec(cmdId, options, what) {
         if (!cmdId) {
             log.warning(`${this.label} : aucune commande Jeedom pour « ${what} »`);
             this.#restore();
-            return;
+            return Promise.resolve(false);
         }
-        log.info(`${this.label} : ${what} (commande ${cmdId}${options && Object.keys(options).length ? " " + JSON.stringify(options) : ""})`);
-        return this.#link.exec(cmdId, options).catch(error => {
-            log.error(`${this.label} : « ${what} » refusé par Jeedom :`, error);
-            this.#restore();
+        const key = String(cmdId);
+        const pending = this.#pendingExec.get(key);
+        /* Fusion seulement avec le dernier ordre de la file : « allumer, éteindre, allumer » doit finir allumé. */
+        if (pending && pending === this.#lastJob) {
+            pending.options = options;
+            pending.what = what;
+            return pending.promise;
+        }
+        const job = { options, what };
+        job.promise = this.#execChain.then(async () => {
+            this.#pendingExec.delete(key);
+            if (this.#lastJob === job) this.#lastJob = null;
+            const detail = job.options && Object.keys(job.options).length ? " " + JSON.stringify(job.options) : "";
+            log.info(`${this.label} : ${job.what} (commande ${cmdId}${detail})`);
+            try {
+                await this.#link.exec(cmdId, job.options);
+                return true;
+            } catch (error) {
+                log.error(`${this.label} : « ${job.what} » refusé par Jeedom :`, error);
+                this.#restore();
+                return false;
+            }
         });
+        this.#execChain = job.promise;
+        this.#pendingExec.set(key, job);
+        this.#lastJob = job;
+        return job.promise;
     }
 
     commandOnOff(on) {
@@ -775,19 +812,26 @@ export class Device {
             this.#settleCover(target);
         }
         const openTarget = typeof target === "number" ? 100 - target / 100 : null;
+        const run = (cmdId, options, what) => {
+            const after = this.#afterExec;
+            this.#afterExec = null;
+            const promise = this.#exec(cmdId, options, what);
+            if (after) promise.then(after);
+            return promise;
+        };
         const wantsOpen = openTarget !== null ? openTarget >= 50 : direction === MovementDirection.Open;
 
         /* Tout ouvert ou tout fermé : les boutons, plus sûrs qu'un curseur mal calibré. */
-        if ((openTarget === null || openTarget === 100) && wantsOpen && cmds.up) return this.#exec(cmds.up, {}, "ouvrir");
-        if ((openTarget === null || openTarget === 0) && !wantsOpen && cmds.down) return this.#exec(cmds.down, {}, "fermer");
+        if ((openTarget === null || openTarget === 100) && wantsOpen && cmds.up) return run(cmds.up, {}, "ouvrir");
+        if ((openTarget === null || openTarget === 0) && !wantsOpen && cmds.down) return run(cmds.down, {}, "fermer");
 
         if (openTarget !== null && cmds.setLevel) {
             const open = this.spec.params.invert ? 100 - openTarget : openTarget;
             const slider = Math.round(this.levelMin + (open / 100) * (this.levelMax - this.levelMin));
-            return this.#exec(cmds.setLevel, { slider }, `position ${Math.round(openTarget)} %`);
+            return run(cmds.setLevel, { slider }, `position ${Math.round(openTarget)} %`);
         }
         /* Sans curseur, une position intermédiaire devient ouvrir ou fermer. */
-        return this.#exec(wantsOpen ? cmds.up : cmds.down, {}, wantsOpen ? "ouvrir" : "fermer");
+        return run(wantsOpen ? cmds.up : cmds.down, {}, wantsOpen ? "ouvrir" : "fermer");
     }
 
     commandCoverStop() {
@@ -806,7 +850,13 @@ export class Device {
         clearTimeout(this.#coverTimer);
         const stopped = { global: 0, lift: 0, tilt: 0 };
         if (!this.spec.cmds.state) {
-            this.#later({ windowCovering: { currentPositionLiftPercent100ths: target, operationalStatus: stopped } });
+            /* Rien ne dira où est le volet : on le croit à la cible, une fois l'ordre accepté par Jeedom. */
+            this.#afterExec = ok => {
+                const state = ok
+                    ? { currentPositionLiftPercent100ths: target, operationalStatus: stopped }
+                    : { targetPositionLiftPercent100ths: this.endpoint?.state?.windowCovering?.currentPositionLiftPercent100ths ?? null, operationalStatus: stopped };
+                this.#later({ windowCovering: state });
+            };
             return;
         }
         const current = this.endpoint?.state?.windowCovering?.currentPositionLiftPercent100ths;
@@ -815,6 +865,7 @@ export class Device {
             return;
         }
         this.#coverTimer = setTimeout(() => {
+            if (this.#retired) return;
             this.#coverTarget = null;
             const position = this.endpoint?.state?.windowCovering?.currentPositionLiftPercent100ths;
             if (typeof position === "number") {
@@ -884,7 +935,7 @@ export class Device {
         const lo = toNumber(params.ctMin);
         const hi = toNumber(params.ctMax);
         let range;
-        if (lo !== null && hi !== null && hi > lo) {
+        if (lo !== null && hi !== null && hi > lo && lo > 0) {
             range = params.ctKelvin ? [kelvinToMireds(hi), kelvinToMireds(lo)] : [Math.round(lo), Math.round(hi)];
         } else {
             range = [153, 500];
@@ -906,6 +957,10 @@ export class Device {
 
     commandColorTemperature(mireds) {
         if (!this.spec.cmds.setColorTemp) {
+            /* Lampe couleur sans blanc réglable : le blanc demandé part comme une couleur approchante. */
+            if (this.spec.cmds.setColor) {
+                return this.commandColor(toHex(kelvinToRgb(miredsToKelvin(mireds))), `blanc ${miredsToKelvin(mireds)} K`);
+            }
             log.warning(`${this.label} : pas de commande Jeedom de température de couleur`);
             this.#restore();
             return;

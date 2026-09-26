@@ -89,6 +89,19 @@ export function xyToRgb(xm, ym) {
     return { r: gamma(r / max) * 255, g: gamma(g / max) * 255, b: gamma(b / max) * 255 };
 }
 
+/*
+ * Température de couleur → RGB approché (formule de Tanner Helland), à pleine
+ * luminosité. Sert aux lampes couleur qui n'ont pas de commande de blanc
+ * réglable : le blanc demandé par Google leur est envoyé comme une couleur.
+ */
+export function kelvinToRgb(kelvin) {
+    const t = clamp(kelvin, 1000, 40000) / 100;
+    const r = t <= 66 ? 255 : 329.698727446 * (t - 60) ** -0.1332047592;
+    const g = t <= 66 ? 99.4708025861 * Math.log(t) - 161.1195681661 : 288.1221695283 * (t - 60) ** -0.0755148492;
+    const b = t >= 66 ? 255 : t <= 19 ? 0 : 138.5177312231 * Math.log(t - 10) - 305.0447927307;
+    return { r: clamp(r, 0, 255), g: clamp(g, 0, 255), b: clamp(b, 0, 255) };
+}
+
 export function kelvinToMireds(kelvin) {
     return kelvin > 0 ? Math.round(1_000_000 / kelvin) : null;
 }

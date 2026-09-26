@@ -117,7 +117,9 @@ async function fetchConfig() {
         try {
             return await link.getConfig();
         } catch (error) {
-            log.warning(`Configuration illisible (essai ${attempt}) :`, error);
+            if (attempt <= 3 || attempt % 10 === 0) {
+                log.warning(`Configuration illisible (essai ${attempt}) :`, error);
+            }
             await new Promise(resolve => setTimeout(resolve, Math.min(30, attempt * 5) * 1000));
         }
     }
@@ -169,11 +171,16 @@ setInterval(() => {
     if (failures.size && !stopping) reload().catch(error => log.error("Nouvel essai des ponts :", error));
 }, 60_000).unref();
 
+/* Un rechargement déjà en attente suffit : dix ordres « reload » rapprochés n'en font qu'un. */
+let pendingReload = null;
 function reload() {
-    return serialized(async () => {
+    if (pendingReload) return pendingReload;
+    pendingReload = serialized(async () => {
+        pendingReload = null;
         const config = await fetchConfig();
         if (config) await applyConfig(config);
     });
+    return pendingReload;
 }
 
 /* ------------------------------------------------------------ valeurs Jeedom */
@@ -251,7 +258,11 @@ const socket = createServer(connection => {
             try {
                 message = JSON.parse(line);
             } catch {
-                connection.write(JSON.stringify({ error: "JSON illisible" }) + "\n");
+                message = null;
+            }
+            /* « null », un nombre, une liste : JSON valide mais pas un ordre. Sans ce contrôle, le démon plantait. */
+            if (!message || typeof message !== "object" || Array.isArray(message)) {
+                connection.write(JSON.stringify({ error: "ordre illisible" }) + "\n");
                 continue;
             }
             log.debug("Ordre reçu :", message.order);
@@ -289,6 +300,11 @@ async function shutdown(signal) {
 process.on("SIGTERM", () => shutdown("SIGTERM"));
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("unhandledRejection", error => log.error("Erreur non rattrapée :", error));
+/* Dernier filet : l'erreur est journalisée lisiblement avant l'arrêt ; Jeedom relancera le démon. */
+process.on("uncaughtException", error => {
+    log.error("Erreur fatale, arrêt du démon :", error);
+    shutdown("erreur fatale").finally(() => process.exit(1));
+});
 
 socket.on("error", error => {
     log.error(`Port des ordres ${args.socketport} indisponible (un autre démon tourne-t-il déjà ?) :`, error);

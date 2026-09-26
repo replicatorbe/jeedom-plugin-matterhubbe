@@ -152,21 +152,21 @@ class matterhubbe extends eqLogic {
     /*
      * Température de couleur : Jeedom ne fixe pas l'unité. Kelvins si l'unité
      * est « K » ou si les bornes dépassent 500 (règle du plugin homebridge),
-     * mireds sinon ; 2700-6500 K sans bornes.
+     * mireds sinon ; sans bornes, 2700-6500 K (ou 153-500 mireds si l'unité le
+     * dit). Jamais d'après la valeur du moment : elle varie (0 lampe éteinte),
+     * et l'appareil changerait de forme dans Google à chaque bascule.
      */
     private static function colorTempRange($_action, $_info) {
         $min = $_action->getConfiguration('minValue');
         $max = $_action->getConfiguration('maxValue');
         $unit = strtoupper(trim($_action->getUnite() . (is_object($_info) ? $_info->getUnite() : '')));
         if (!is_numeric($min) || !is_numeric($max) || $max <= $min) {
-            /* Sans bornes, la valeur actuelle tranche : au-delà de 1000, ce sont des kelvins. */
-            $current = is_object($_info) ? $_info->execCmd() : null;
-            if (strpos($unit, 'K') === false && is_numeric($current) && $current > 0 && $current <= 1000) {
+            if (strpos($unit, 'MIRED') !== false) {
                 return array('ctMin' => 153, 'ctMax' => 500, 'ctKelvin' => false);
             }
             return array('ctMin' => 2700, 'ctMax' => 6500, 'ctKelvin' => true);
         }
-        $kelvin = strpos($unit, 'K') !== false || ($min > 500 && $max > 500);
+        $kelvin = (strpos($unit, 'K') !== false && strpos($unit, 'MIRED') === false) || ($min > 500 && $max > 500);
         return array('ctMin' => (float) $min, 'ctMax' => (float) $max, 'ctKelvin' => $kelvin);
     }
 
@@ -199,13 +199,13 @@ class matterhubbe extends eqLogic {
         $off = '';
         $heat = '';
         foreach ($list as $mode) {
-            if ($off == '' && (strtolower($mode['logicalId']) == 'off' || preg_match('/^(off|arr[eê]t|arr[eê]t[ée]|aus|stop)$/iu', trim($mode['label'])) || strtolower($mode['select']) == 'off')) {
+            if ($off == '' && (strtolower((string) $mode['logicalId']) == 'off' || preg_match('/^(off|arr[eê]t|arr[eê]t[ée]|[ée]teint|aus|stop)$/iu', trim($mode['label'])) || strtolower((string) $mode['select']) == 'off')) {
                 $off = $mode['key'];
             }
         }
         foreach ($list as $mode) {
             /* « Arrêt chauffage », « Hors gel » : pas des modes de chauffe. */
-            if ($mode['key'] != $off && preg_match('/(confort|comfort|chauf|heat|manu|jour|day)/iu', $mode['label'])
+            if ($mode['key'] != $off && preg_match('/(confort|comfort|chauf|heat|manu|jour)/iu', $mode['label'])
                 && !preg_match('/(arr[eê]t|off|hors|stop)/iu', $mode['label'])) {
                 $heat = $mode['key'];
                 break;
@@ -213,7 +213,8 @@ class matterhubbe extends eqLogic {
         }
         if ($heat == '') {
             foreach ($list as $mode) {
-                if ($mode['key'] != $off) {
+                /* Hors gel, Eco, Absence… ne sont pas des modes de chauffe : à choisir à la main s'il le faut. */
+                if ($mode['key'] != $off && !preg_match('/(hors|gel|eco|[ée]co|absen|vacan|holiday|nuit|night)/iu', $mode['label'])) {
                     $heat = $mode['key'];
                     break;
                 }
@@ -330,7 +331,9 @@ class matterhubbe extends eqLogic {
         if (is_object($setSetpoint)) {
             $setpoint = self::findCmd($cmds, 'THERMOSTAT_SETPOINT', 'info');
             if (!is_object($setpoint) && is_numeric($setSetpoint->getValue())) {
-                $setpoint = cmd::byId($setSetpoint->getValue());
+                $linked = cmd::byId($setSetpoint->getValue());
+                /* Une action à cet endroit serait exécutée à chaque lecture de sa « valeur ». */
+                $setpoint = (is_object($linked) && $linked->getType() == 'info') ? $linked : null;
             }
             $temperature = self::findCmd($cmds, array('THERMOSTAT_TEMPERATURE', 'TEMPERATURE'), 'info');
             $range = self::sliderRange($setSetpoint, 7, 30);
@@ -378,8 +381,9 @@ class matterhubbe extends eqLogic {
             'temperature' => array('TEMPERATURE'),
             'humidity' => array('HUMIDITY'),
         );
+        $subTypes = array('contact' => 'binary', 'occupancy' => null, 'temperature' => 'numeric', 'humidity' => 'numeric');
         foreach ($sensors as $family => $types) {
-            $cmd = self::findCmd($cmds, $types, 'info');
+            $cmd = self::findCmd($cmds, $types, 'info', $subTypes[$family]);
             if (!is_object($cmd)) {
                 continue;
             }
@@ -510,10 +514,18 @@ class matterhubbe extends eqLogic {
                 $name = self::defaultName($eqLogic->getName(), $families[$family]['label'], $order[$family], $chosen[$eqId]);
             }
 
-            /* Deux familles du même équipement exposées sous le même type : la seconde prend la famille dans sa clé. */
+            /*
+             * Clé stable : le type, plus la famille quand celle-ci n'est pas la
+             * « propriétaire » du type (relais exposé en lumière). Ainsi deux
+             * fonctions du même équipement ne se disputent jamais une clé, et
+             * décocher l'une ne donne pas son identité Google à l'autre.
+             */
             $key = 'eq' . $eqId . '-' . $kind;
-            if (isset($keys[$key])) {
+            if (self::kindOwner($kind) != $family) {
                 $key .= '-' . $family;
+            }
+            if (isset($keys[$key])) {
+                continue;
             }
             $keys[$key] = true;
 
@@ -554,6 +566,11 @@ class matterhubbe extends eqLogic {
         }
         foreach (array('off' => 'defaultOff', 'heat' => 'defaultHeat') as $which => $default) {
             $key = isset($_item[$which . 'Mode']) ? (string) $_item[$which . 'Mode'] : $_info[$default];
+            /* Choix devenu inconnu (actions de mode recréées) : retour au mode proposé, plutôt que plus de mode du tout. */
+            if ($key !== '' && !isset($byKey[$key])) {
+                log::add(__CLASS__, 'warning', __('Mode de thermostat introuvable, mode proposé utilisé à la place :', __FILE__) . ' ' . $key);
+                $key = $_info[$default];
+            }
             if ($key === '' || !isset($byKey[$key])) {
                 continue;
             }
@@ -565,6 +582,12 @@ class matterhubbe extends eqLogic {
             }
         }
         return $out;
+    }
+
+    /* Famille « naturelle » de chaque type d'appareil. */
+    private static function kindOwner($_kind) {
+        $owners = array('onoff_light' => 'light', 'dimmable_light' => 'light', 'color_light' => 'light', 'plug' => 'energy');
+        return isset($owners[$_kind]) ? $owners[$_kind] : $_kind;
     }
 
     /*
@@ -724,8 +747,10 @@ class matterhubbe extends eqLogic {
             return false;
         }
         log::add(__CLASS__, 'info', __('Équipements exposés modifiés : rechargement du démon', __FILE__));
-        self::storeExposure($exposure);
-        self::sendToDaemon(array('order' => 'reload'));
+        /* L'empreinte n'est retenue que si le démon a reçu l'ordre ; sinon on réessaiera au prochain passage. */
+        if (self::sendToDaemon(array('order' => 'reload'))) {
+            self::storeExposure($exposure);
+        }
         return true;
     }
 
@@ -766,7 +791,7 @@ class matterhubbe extends eqLogic {
         $pid_file = jeedom::getTmpFolder(__CLASS__) . '/deamon.pid';
         if (file_exists($pid_file)) {
             $pid = trim(file_get_contents($pid_file));
-            if ($pid != '' && @posix_getsid((int) $pid)) {
+            if ($pid != '' && self::isDaemonPid((int) $pid)) {
                 $return['state'] = 'ok';
             } else {
                 @unlink($pid_file);
@@ -805,13 +830,14 @@ class matterhubbe extends eqLogic {
         $version = $cache->getValue(null);
         if ($version === null) {
             $version = trim((string) shell_exec('node -v 2>/dev/null'));
-            cache::set(__CLASS__ . '::nodeVersion', $version, 600);
+            /* Une chaîne vide ne se met pas en cache chez Jeedom : « none » à la place. */
+            cache::set(__CLASS__ . '::nodeVersion', $version == '' ? 'none' : $version, 600);
         }
-        if ($version == '') {
+        if ($version == '' || $version == 'none') {
             return __('Node.js est absent : installez les dépendances du plugin.', __FILE__);
         }
         $v = ltrim($version, 'v');
-        $ok = (version_compare($v, '20.19.0', '>=') && version_compare($v, '22.0.0', '<')) || version_compare($v, '22.13.0', '>=');
+        $ok = (version_compare($v, '20.19.0', '>=') && version_compare($v, '21.0.0', '<')) || version_compare($v, '22.13.0', '>=');
         if (!$ok) {
             return __('Node.js', __FILE__) . ' ' . $version . ' ' . __('est trop ancien : il faut la version 20.19 ou plus. Relancez l\'installation des dépendances.', __FILE__);
         }
@@ -883,7 +909,13 @@ class matterhubbe extends eqLogic {
         /* Filets de sécurité : un démon lancé à la main, ou dont le fichier de PID
          * a été perdu, garderait le port d'ordres et le port Matter occupés. */
         if (count(system::ps('resources/matterhubbed/matterhubbed.js')) > 0) {
-            system::kill('resources/matterhubbed/matterhubbed.js');
+            system::kill('resources/matterhubbed/matterhubbed.js', false);
+            for ($i = 0; $i < 20 && count(system::ps('resources/matterhubbed/matterhubbed.js')) > 0; $i++) {
+                usleep(250000);
+            }
+            if (count(system::ps('resources/matterhubbed/matterhubbed.js')) > 0) {
+                system::kill('resources/matterhubbed/matterhubbed.js');
+            }
         }
         system::fuserk((string) self::socketPort());
         return true;
@@ -971,6 +1003,26 @@ class matterhubbe extends eqLogic {
         $plugin = plugin::byId(__CLASS__);
         if (is_object($plugin)) {
             $plugin->deamon_start(false, true);
+        }
+    }
+
+    /*
+     * Fin d'installation des dépendances. Le cœur appelle cette méthode avant
+     * d'effacer son fichier de progression : les dépendances sont encore « en
+     * cours » et le démon refuserait de partir. On le démarre donc une minute
+     * plus tard, plutôt que d'attendre le contrôle du cœur (jusqu'à 5 minutes
+     * sans QR code).
+     */
+    public static function dependancy_end() {
+        try {
+            $cron = new cron();
+            $cron->setClass(__CLASS__);
+            $cron->setFunction('startDaemonIfAllowed');
+            $cron->setOnce(1);
+            $cron->setSchedule(cron::convertDateToCron(strtotime('+1 minute')));
+            $cron->save();
+        } catch (Throwable $e) {
+            log::add(__CLASS__, 'warning', __('Démarrage différé du démon impossible :', __FILE__) . ' ' . $e->getMessage());
         }
     }
 
@@ -1097,9 +1149,23 @@ class matterhubbe extends eqLogic {
         $status['launchable'] = $info['launchable'];
         $status['launchableMessage'] = isset($info['launchable_message']) ? $info['launchable_message'] : '';
         $status['dependancy'] = is_object($plugin) ? $plugin->dependancy_info()['state'] : 'nok';
-        $status['error'] = $error;
+        $status['error'] = self::readableError($error);
         $status['selected'] = count($this->getSelection());
         return $status;
+    }
+
+    /* Messages techniques du démon traduits pour l'utilisateur. */
+    private static function readableError($_error) {
+        if ($_error == '') {
+            return '';
+        }
+        if (stripos($_error, 'EADDRINUSE') !== false || stripos($_error, 'address already in use') !== false) {
+            return __('le port Matter est déjà utilisé par un autre logiciel (autre pont Matter, Home Assistant…).', __FILE__);
+        }
+        if (stripos($_error, 'EACCES') !== false) {
+            return __('le port Matter n\'est pas autorisé (choisissez un port supérieur à 1024).', __FILE__);
+        }
+        return $_error;
     }
 
     public static function health() {
