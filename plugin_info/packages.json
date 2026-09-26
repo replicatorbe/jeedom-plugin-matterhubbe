@@ -1,0 +1,11 @@
+{
+    "pre-install": {
+        "script": "plugins/matterhubbe/resources/install_node.sh"
+    },
+    "apt": {
+        "gnupg": {}
+    },
+    "npm": {
+        "plugins/matterhubbe/resources/matterhubbed": {}
+    }
+}

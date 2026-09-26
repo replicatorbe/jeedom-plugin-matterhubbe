@@ -1,0 +1,15 @@
+# Exclusions propres au plugin matterhubbe, ajoutées à celles de deploy-plugin.sh.
+# Un motif rsync par ligne.
+
+# Dépendances Node, installées par Jeedom dans le dossier du plugin lors de
+# l'installation des dépendances. Sans cette ligne, le --delete du déploiement
+# les effacerait et le démon ne démarrerait plus.
+/resources/matterhubbed/node_modules/
+
+# Identité Matter des ponts (fabrics, clés, code d'appairage, numéros
+# d'endpoint), écrite par le démon. L'effacer oblige à réappairer Google Home
+# et à refaire toutes les pièces.
+/data/
+
+# Contrôles de développement.
+/tests/

@@ -1,0 +1,23 @@
+# Fichiers propres à l'installation, jamais versionnés
+core/config/common.config.php
+/data/
+
+# Dépendances Node, installées par Jeedom dans le dossier du plugin
+node_modules/
+
+# Journaux et fichiers de processus
+*.log
+*.pid
+
+# Environnements de développement
+.vscode/
+.project
+.remote-sync.json
+sftp-config.json
+nbproject/
+test.php
+
+# Systèmes de fichiers
+.DS_Store
+Thumbs.db
+*.php~

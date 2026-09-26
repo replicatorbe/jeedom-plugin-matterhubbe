@@ -1,0 +1,12 @@
+{
+  "name": "matterhubbed",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Démon du plugin Jeedom matterhubbe : pont Matter local",
+  "main": "matterhubbed.js",
+  "engines": { "node": ">=20.19.0 <22.0.0 || >=22.13.0" },
+  "dependencies": {
+    "@matter/main": "0.17.9"
+  }
+}

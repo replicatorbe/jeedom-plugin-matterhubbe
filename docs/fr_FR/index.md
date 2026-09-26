@@ -1,0 +1,133 @@
+# Plugin Matter Hub
+
+Expose vos équipements Jeedom à **Google Home** par le protocole Matter,
+entièrement en local : ni cloud, ni DNS Jeedom, ni abonnement aux services
+vocaux. Google pilote directement Jeedom sur votre réseau.
+
+Le plugin crée un **pont Matter** (un « bridge ») : Google Home le voit comme un
+appareil Matter qui en contient d'autres, un par équipement Jeedom exposé.
+
+## Prérequis
+
+- Un **hub Google compatible Matter** sur le même réseau que Jeedom : Nest Hub
+  (2ᵉ génération ou Max), Nest Mini, Nest Audio, Chromecast avec Google TV,
+  Google TV Streamer, Nest Wifi Pro… C'est lui qui parle au pont en local.
+- Le **multicast (mDNS) et l'IPv6 local** doivent passer entre Jeedom et le hub :
+  même réseau, pas de VLAN séparé ni d'isolation Wi-Fi.
+- Le plugin installe **Node.js** (20.19 ou plus récent, 22 de préférence) et la
+  bibliothèque matter.js par le mécanisme de dépendances de Jeedom. Comptez
+  jusqu'à une vingtaine de minutes. Le démon refuse de démarrer, avec un message
+  explicite, si la version de Node.js installée est trop ancienne.
+- **Docker** : le conteneur Jeedom doit être en réseau `host` (mDNS et IPv6
+  locaux) ; derrière le NAT de Docker, Google ne voit pas le pont.
+
+### Déclarer le pont chez Google (une fois)
+
+Le pont n'est pas certifié par la Connectivity Standards Alliance : il utilise
+les identifiants de test Matter. Google Home refuse d'appairer un tel appareil
+tant qu'il n'est pas déclaré dans votre compte développeur, ce qui est gratuit :
+
+1. Ouvrez la [Google Home Developer Console](https://console.home.google.com/)
+   avec **le même compte Google que l'application Google Home** de la maison,
+   et acceptez les conditions.
+2. Créez un projet, puis **Add Matter integration**.
+3. Renseignez un nom de produit, **Vendor ID `0xFFF1`** et **Product ID
+   `0x8000`** ; comme type d'appareil, choisissez un pont (« Bridge ») s'il est
+   proposé, sinon n'importe lequel. Enregistrez.
+
+Rien d'autre n'est à faire dans la console : tout reste local ensuite.
+
+## Mise en route
+
+1. **Plugins → Gestion des plugins → Matter Hub** : activez le plugin. Les
+   dépendances (Node.js 22 et matter.js) s'installent d'elles-mêmes, et un pont
+   « Jeedom » est créé : un seul suffit pour Google Home. Le démon démarre
+   seul à la fin de l'installation.
+2. Sur la page du plugin, ouvrez le pont « Jeedom ».
+3. Onglet **Appareils exposés** : cochez les équipements à envoyer à Google,
+   choisissez éventuellement le type (un relais qui commande un plafonnier sera
+   mieux en « Lumière » qu'en « Prise ») et le nom affiché, puis **Sauvegarder**.
+4. Onglet **Pont** : le QR code et le code à 11 chiffres apparaissent.
+5. Dans l'application **Google Home** : **Ajouter → Appareil Matter**, scannez
+   le QR code, puis rangez les appareils dans vos pièces.
+
+Ajouter ou retirer un équipement plus tard ne demande pas de réappairer :
+enregistrez le pont, l'appareil apparaît ou disparaît dans Google Home. Un
+nouvel appareil arrive sans pièce : rangez-le depuis l'application.
+
+À savoir :
+
+- **Noms** : le nom envoyé (32 caractères au plus) sert à l'ajout ; ensuite,
+  Google garde en général le nom que vous lui donnez dans l'application.
+  Préférez des noms uniques et parlants.
+- **Changer le type** d'un appareil déjà exposé (Prise → Lumière) le recrée dans
+  Google : pièce et routines sont à refaire.
+- **Équipement désactivé** dans Jeedom : il reste dans Google, mais « hors
+  ligne », et revient tel quel une fois réactivé. Décochez-le pour le retirer.
+- **Équipement supprimé** ou qui a perdu ses types génériques : il est signalé
+  en tête de l'onglet « Appareils exposés », pour être décoché.
+
+## Ce qui est exposé
+
+Le type d'appareil est déduit des **types génériques** des commandes
+(Outils → Types génériques). Un équipement qui n'apparaît pas dans l'onglet
+« Appareils exposés » n'a pas de type générique exploitable.
+
+| Types génériques Jeedom | Appareil dans Google Home |
+|---|---|
+| `LIGHT_ON` + `LIGHT_OFF` (+ `LIGHT_STATE` / `LIGHT_STATE_BOOL`) | Lumière |
+| … + `LIGHT_SLIDER` (+ `LIGHT_BRIGHTNESS`) | Lumière variable |
+| `ENERGY_ON` + `ENERGY_OFF` (+ `ENERGY_STATE`) | Prise, ou Lumière au choix |
+| `OPENING`, `OPENING_WINDOW` | Capteur d'ouverture |
+| `PRESENCE` | Capteur de présence |
+| `TEMPERATURE` | Capteur de température |
+| `HUMIDITY` | Capteur d'humidité |
+
+Un même équipement peut donner plusieurs appareils : un module
+température + humidité apparaît comme deux capteurs.
+
+- **Luminosité** : la plage du curseur (`LIGHT_SLIDER`, valeurs min et max de la
+  commande) est convertie vers l'échelle Matter.
+- **Ouvertures** : Jeedom compte 1 = fermé. Si le plugin de l'équipement
+  remonte l'inverse et que la commande est réglée sur « Inverser », le plugin en
+  tient compte.
+- **Réponse immédiate** : Google voit le nouvel état tout de suite ; si Jeedom
+  refuse la commande, l'état réel est rétabli.
+- **Lumière sans boutons** : un curseur `LIGHT_SLIDER` seul suffit ; allumer
+  remet le dernier niveau connu, éteindre met le curseur au minimum.
+- **Modules à plusieurs relais** : une seule sortie par équipement est exposée
+  (celle dont les commandes sont liées à l'info d'état).
+
+## Plusieurs contrôleurs, réappairage
+
+Le bouton **Ouvrir l'appairage** (visible une fois le pont appairé) rend le code
+à nouveau utilisable pendant 15 minutes : pour réappairer Google après une
+réinitialisation du hub, ou pour ajouter un second contrôleur Matter.
+
+**Réinitialiser** oublie tous les contrôleurs et génère un nouveau code : Google
+perd le pont, ses pièces et ses routines.
+
+## Sauvegarde
+
+L'appairage (clés, contrôleurs, numéros d'appareils) est stocké dans
+`plugins/matterhubbe/data/matter`, inclus dans les sauvegardes Jeedom.
+Restaurer une sauvegarde sur une nouvelle machine conserve l'appairage.
+Ces fichiers contiennent les clés du pont : ne partagez pas une sauvegarde.
+
+**Désinstaller le plugin efface cet appairage** : Google perd le pont. Une mise à
+jour, elle, le conserve. Avant de supprimer un pont, retirez-le aussi de
+l'application Google Home, sinon il y reste « hors ligne ».
+
+## Dépannage
+
+- **Google ne trouve pas le pont** : vérifiez le hub, le réseau (mDNS, IPv6,
+  pas d'isolation Wi-Fi), et la déclaration dans la Developer Console. Si la
+  machine a plusieurs interfaces (Docker, VPN), indiquez la bonne dans la
+  configuration du plugin (« Interface réseau »).
+- **« Appareil non certifié »** : normal, confirmez l'ajout.
+- **Un appareil ne réagit pas** : journal `matterhubbed` en niveau Debug ; chaque
+  commande reçue de Google y est tracée avec la commande Jeedom exécutée. En
+  Debug, le journal contient aussi le code d'appairage : ne le publiez pas tel
+  quel sur un forum.
+- **Le port 5540 est pris** (autre pont Matter sur la machine) : l'onglet
+  « Pont » l'indique ; changez le port et enregistrez.
