@@ -420,6 +420,7 @@ function matterhubbeRenderStatus(_status) {
     html += '<a class="btn btn-default btn-sm" id="bt_matterhubbeOpenCommissioning" role="button" tabindex="0"><i class="fas fa-door-open"></i> {{Autoriser un nouvel appairage}}</a>'
   }
   html += '</div></div>'
+  html += matterhubbeSummaryHtml(_status.summary)
   if (_status.commissioned) {
     html += '<hr><a class="btn btn-danger btn-xs pull-right" id="bt_matterhubbeFactoryReset" role="button" tabindex="0"><i class="fas fa-eraser"></i> {{Réinitialiser le pont}}</a>'
     html += '<span class="help-block">{{La réinitialisation oublie Google et génère un nouveau code : en dernier recours seulement.}}</span>'
@@ -430,6 +431,28 @@ function matterhubbeRenderStatus(_status) {
   if (!_status.commissioned) {
     matterhubbeSchedulePoll(5000)
   }
+}
+
+/* « Ce que Google voit » : appareils par type, ceux hors ligne, et les coches qui ne donnent plus rien. */
+function matterhubbeSummaryHtml(_summary) {
+  if (!_summary || !_summary.types) { return '' }
+  var types = Object.keys(_summary.types)
+  if (types.length === 0) { return '' }
+  var html = '<fieldset style="margin-top:15px;"><legend style="font-size:14px;"><i class="fas fa-eye"></i> {{Ce que Google voit}}</legend><ul style="padding-left:20px;margin:0;">'
+  types.forEach(function (_t) {
+    html += '<li>' + parseInt(_summary.types[_t]) + ' × ' + matterhubbeEscape(_t) + '</li>'
+  })
+  html += '</ul>'
+  var offline = Array.isArray(_summary.offline) ? _summary.offline : []
+  if (offline.length > 0) {
+    html += '<div class="help-block" style="margin-bottom:0;"><i class="fas fa-plug"></i> {{Hors ligne dans Google (équipement désactivé ou module déconnecté) :}} '
+      + offline.map(matterhubbeEscape).join(', ') + '</div>'
+  }
+  if (_summary.ignored > 0) {
+    html += '<div class="help-block" style="margin-bottom:0;"><i class="fas fa-exclamation-triangle"></i> ' + parseInt(_summary.ignored)
+      + ' {{appareil(s) coché(s) mais plus exposable(s) : voir en tête de l\'onglet « Appareils exposés ».}}</div>'
+  }
+  return html + '</fieldset>'
 }
 
 function matterhubbeVendor(_vendorId) {

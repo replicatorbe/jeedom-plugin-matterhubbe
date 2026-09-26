@@ -37,7 +37,7 @@ class matterhubbe extends eqLogic {
     const ACTION_ROLES = array('on', 'off', 'setLevel', 'up', 'down', 'stop', 'setSetpoint', 'lock', 'unlock', 'setColor', 'setColorTemp');
 
     /* Fonctions qui reçoivent la batterie de l'équipement (info BATTERY), affichée par Google. */
-    const BATTERY_FAMILIES = array('contact', 'occupancy', 'temperature', 'humidity', 'lock', 'cover');
+    const BATTERY_FAMILIES = array('contact', 'occupancy', 'temperature', 'humidity', 'lock', 'cover', 'smoke', 'leak', 'illuminance');
 
     const DEFAULT_PORT = 5540;
     const DEFAULT_SOCKET_PORT = 55064;
@@ -91,6 +91,18 @@ class matterhubbe extends eqLogic {
                 'label' => __('Humidité', __FILE__),
                 'kinds' => array('humidity'),
             ),
+            'smoke' => array(
+                'label' => __('Détecteur de fumée', __FILE__),
+                'kinds' => array('smoke'),
+            ),
+            'leak' => array(
+                'label' => __('Détecteur de fuite', __FILE__),
+                'kinds' => array('leak'),
+            ),
+            'illuminance' => array(
+                'label' => __('Luminosité', __FILE__),
+                'kinds' => array('illuminance'),
+            ),
             'scenario' => array(
                 'label' => __('Scénario', __FILE__),
                 'kinds' => array('scenario'),
@@ -112,6 +124,9 @@ class matterhubbe extends eqLogic {
             'temperature'    => __('Capteur de température', __FILE__),
             'humidity'       => __('Capteur d\'humidité', __FILE__),
             'scenario'       => __('Interrupteur (lance le scénario)', __FILE__),
+            'smoke'          => __('Détecteur de fumée', __FILE__),
+            'leak'           => __('Détecteur de fuite d\'eau', __FILE__),
+            'illuminance'    => __('Capteur de luminosité', __FILE__),
         );
     }
 
@@ -405,16 +420,20 @@ class matterhubbe extends eqLogic {
             'occupancy' => array('PRESENCE'),
             'temperature' => array('TEMPERATURE'),
             'humidity' => array('HUMIDITY'),
+            'smoke' => array('SMOKE'),
+            'leak' => array('WATER_LEAK', 'FLOOD'),
+            'illuminance' => array('BRIGHTNESS'),
         );
-        $subTypes = array('contact' => 'binary', 'occupancy' => null, 'temperature' => 'numeric', 'humidity' => 'numeric');
+        $subTypes = array('contact' => 'binary', 'occupancy' => null, 'temperature' => 'numeric', 'humidity' => 'numeric',
+            'smoke' => 'binary', 'leak' => 'binary', 'illuminance' => 'numeric');
         foreach ($sensors as $family => $types) {
             $cmd = self::findCmd($cmds, $types, 'info', $subTypes[$family]);
             if (!is_object($cmd)) {
                 continue;
             }
             $params = array();
-            if ($family == 'contact') {
-                /* Jeedom compte 1 = fermé ; un plugin qui remonte l'inverse le signale par « Inverser ». */
+            if (in_array($family, array('contact', 'smoke', 'leak'))) {
+                /* Un plugin qui remonte l'état à l'envers le signale par « Inverser » sur la commande. */
                 $params['invert'] = $cmd->getDisplay('invertBinary') == 1;
             }
             $out[$family] = array(
@@ -422,8 +441,16 @@ class matterhubbe extends eqLogic {
                 'kinds' => array($family),
                 'cmds' => array('value' => self::cmdId($cmd)),
                 'params' => $params,
-                'invertable' => $family == 'contact',
+                'invertable' => in_array($family, array('contact', 'smoke', 'leak')),
             );
+        }
+
+        /* Connexion de l'équipement (ONLINE) : hors ligne dans Google quand le module ne répond plus. */
+        $online = self::findCmd($cmds, 'ONLINE', 'info');
+        if (is_object($online)) {
+            foreach (array_keys($out) as $family) {
+                $out[$family]['cmds']['online'] = self::cmdId($online);
+            }
         }
 
         /* Batterie de l'équipement, rattachée à ses capteurs, sa serrure, son volet. */
@@ -612,16 +639,23 @@ class matterhubbe extends eqLogic {
             }
             $eqLogic = eqLogic::byId($eqId);
             if (!is_object($eqLogic) || !isset($families[$family])) {
+                if (!is_object($eqLogic) && isset($families[$family])) {
+                    self::notifyOnce('lost::' . $this->getId() . '::' . $eqId . '::' . $family,
+                        $this->getName() . ' : ' . __('un équipement exposé a été supprimé de Jeedom', __FILE__) . ' ('
+                        . (isset($item['label']) ? $item['label'] : '#' . $eqId) . ') : ' . __('décochez-le dans l\'onglet « Appareils exposés ».', __FILE__));
+                }
                 continue;
             }
             if (!isset($analyses[$eqId])) {
                 $analyses[$eqId] = self::analyzeEquipment($eqLogic);
             }
             if (!isset($analyses[$eqId][$family])) {
-                log::add(__CLASS__, 'warning', $eqLogic->getHumanName() . ' : ' . __('plus aucune commande de type', __FILE__)
-                       . ' « ' . $families[$family]['label'] . ' », ' . __('appareil ignoré', __FILE__));
+                self::notifyOnce('lost::' . $this->getId() . '::' . $eqId . '::' . $family,
+                    $this->getName() . ' : ' . $eqLogic->getHumanName() . ' ' . __('n\'a plus de commande de type', __FILE__)
+                    . ' « ' . $families[$family]['label'] . ' » : ' . __('il n\'est plus envoyé à Google. Vérifiez ses types génériques, ou décochez-le.', __FILE__));
                 continue;
             }
+            self::clearNotice('lost::' . $this->getId() . '::' . $eqId . '::' . $family);
             $info = $analyses[$eqId][$family];
             $kind = (isset($item['kind']) && in_array($item['kind'], $info['kinds'])) ? $item['kind'] : $info['default'];
 
@@ -914,19 +948,58 @@ class matterhubbe extends eqLogic {
         return true;
     }
 
+    /*
+     * Message dans le centre de messages de Jeedom, une seule fois tant que la
+     * situation dure : le contrôle périodique ne doit pas le répéter.
+     */
+    public static function notifyOnce($_key, $_text) {
+        $key = __CLASS__ . '::notified::' . md5($_key);
+        if (cache::exist($key)) {
+            return;
+        }
+        cache::set($key, 1, 86400);
+        log::add(__CLASS__, 'warning', $_text);
+        message::add(__CLASS__, $_text, '', substr($_key, 0, 120));
+    }
+
+    /* La situation est rentrée dans l'ordre : le message disparaît, et pourra revenir. */
+    public static function clearNotice($_key) {
+        if (!cache::exist(__CLASS__ . '::notified::' . md5($_key))) {
+            return;
+        }
+        cache::delete(__CLASS__ . '::notified::' . md5($_key));
+        message::removeAll(__CLASS__, substr($_key, 0, 120));
+    }
+
     /* État des ponts envoyé par le démon : codes d'appairage, contrôleurs. */
     public static function updateStatus($_status) {
         if (!isset($_status['bridges']) || !is_array($_status['bridges'])) {
             return;
         }
         foreach ($_status['bridges'] as $status) {
-            /* Un pont qui n'a pas démarré n'a ni code ni contrôleurs à jour : on garde le dernier état connu. */
-            if (!is_array($status) || empty($status['running'])) {
+            if (!is_array($status)) {
                 continue;
             }
             $bridge = self::byId(isset($status['id']) ? $status['id'] : 0);
             if (!is_object($bridge) || $bridge->getEqType_name() != __CLASS__) {
                 continue;
+            }
+            /* Un pont qui n'a pas démarré n'a ni code ni contrôleurs à jour : on garde le dernier état connu, et on prévient. */
+            if (empty($status['running'])) {
+                if (!empty($status['error'])) {
+                    self::notifyOnce('start::' . $bridge->getId(), $bridge->getName() . ' : ' . __('le pont Matter ne démarre pas :', __FILE__)
+                        . ' ' . self::readableError((string) $status['error']));
+                }
+                continue;
+            }
+            self::clearNotice('start::' . $bridge->getId());
+            $previous = $bridge->getCache('matter_status', array());
+            if (!empty($previous['commissioned']) && empty($status['commissioned'])) {
+                self::notifyOnce('unpaired::' . $bridge->getId(), $bridge->getName() . ' : '
+                    . __('plus aucun contrôleur n\'est appairé (Google a oublié le pont ?). Scannez à nouveau le QR code depuis l\'onglet « Pont ».', __FILE__));
+            }
+            if (!empty($status['commissioned'])) {
+                self::clearNotice('unpaired::' . $bridge->getId());
             }
             $fabrics = (isset($status['fabrics']) && is_array($status['fabrics'])) ? $status['fabrics'] : array();
             $status['fabrics'] = $fabrics;
@@ -935,6 +1008,8 @@ class matterhubbe extends eqLogic {
             $bridge->checkAndUpdateCmd('commissioned', !empty($status['commissioned']) ? 1 : 0);
             $bridge->checkAndUpdateCmd('controllers', count($fabrics));
             $bridge->checkAndUpdateCmd('devices', isset($status['devices']) ? (int) $status['devices'] : 0);
+            $code = isset($status['manualPairingCode']) ? (string) $status['manualPairingCode'] : '';
+            $bridge->checkAndUpdateCmd('pairingCode', strlen($code) == 11 ? substr($code, 0, 4) . '-' . substr($code, 4, 3) . '-' . substr($code, 7) : $code);
         }
     }
 
@@ -1109,6 +1184,15 @@ class matterhubbe extends eqLogic {
                 break;
             case 'contact':
                 $out['suggested'] = true;
+                break;
+            case 'smoke':
+            case 'leak':
+                /* Une caméra qui « détecte » la fumée n'est pas un détecteur : pas de proposition. */
+                $camera = false;
+                foreach ($_eqLogic->getCmd() as $cmd) {
+                    $camera = $camera || strpos((string) $cmd->getGeneric_type(), 'CAMERA_') === 0;
+                }
+                $out['suggested'] = !$camera;
                 break;
             case 'temperature':
             case 'humidity':
@@ -1464,6 +1548,18 @@ class matterhubbe extends eqLogic {
         $this->addInfoCmd('controllers', __('Contrôleurs', __FILE__), 'numeric', 2);
         $this->addInfoCmd('devices', __('Appareils exposés', __FILE__), 'numeric', 3);
         $this->addInfoCmd('lastCommand', __('Dernier ordre Google', __FILE__), 'string', 4, true);
+        $this->addInfoCmd('pairingCode', __('Code d\'appairage', __FILE__), 'string', 5);
+        if (!is_object($this->getCmd(null, 'openCommissioning'))) {
+            $cmd = new matterhubbeCmd();
+            $cmd->setEqLogic_id($this->getId());
+            $cmd->setLogicalId('openCommissioning');
+            $cmd->setName(__('Autoriser un nouvel appairage', __FILE__));
+            $cmd->setType('action');
+            $cmd->setSubType('other');
+            $cmd->setIsVisible(1);
+            $cmd->setOrder(6);
+            $cmd->save();
+        }
     }
 
     /*
@@ -1497,7 +1593,27 @@ class matterhubbe extends eqLogic {
         $status['dependancy'] = is_object($plugin) ? $plugin->dependancy_info()['state'] : 'nok';
         $status['error'] = self::readableError($error);
         $status['selected'] = count($this->getSelection());
+        $status['summary'] = $this->summary();
         return $status;
+    }
+
+    /*
+     * « Ce que Google voit » : appareils par type, ceux hors ligne (équipement
+     * désactivé ou module déconnecté), et les coches qui ne donnent plus rien.
+     */
+    public function summary() {
+        $types = array();
+        $offline = array();
+        $devices = $this->buildDevices();
+        foreach ($devices as $device) {
+            $types[$device['productName']] = (isset($types[$device['productName']]) ? $types[$device['productName']] : 0) + 1;
+            $online = (is_array($device['cmds']) && isset($device['cmds']['online'])) ? cmd::byId($device['cmds']['online']) : null;
+            if (!$device['reachable'] || (is_object($online) && !$online->execCmd())) {
+                $offline[] = $device['name'];
+            }
+        }
+        arsort($types);
+        return array('types' => $types, 'offline' => $offline, 'ignored' => max(0, count($this->getSelection()) - count($devices)));
     }
 
     /* Messages techniques du démon traduits pour l'utilisateur. */
@@ -1535,6 +1651,21 @@ class matterhubbe extends eqLogic {
 
 class matterhubbeCmd extends cmd {
 
+    /* « Autoriser un nouvel appairage » : utilisable depuis un scénario ou l'application mobile. */
     public function execute($_options = array()) {
+        if ($this->getLogicalId() != 'openCommissioning') {
+            return;
+        }
+        $bridge = $this->getEqLogic();
+        $answer = matterhubbe::sendToDaemon(array('order' => 'openCommissioning', 'bridge_id' => (int) $bridge->getId()), true, 20);
+        if (!is_array($answer)) {
+            throw new Exception(__('Le démon ne répond pas : vérifiez qu\'il est démarré.', __FILE__));
+        }
+        if (isset($answer['error'])) {
+            throw new Exception($answer['error']);
+        }
+        if (!empty($answer['message'])) {
+            log::add('matterhubbe', 'info', $bridge->getHumanName() . ' : ' . $answer['message']);
+        }
     }
 }

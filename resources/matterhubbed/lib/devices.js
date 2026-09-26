@@ -44,6 +44,11 @@ import { ThermostatDevice } from "@matter/main/devices/thermostat";
 import { WindowCoveringDevice } from "@matter/main/devices/window-covering";
 import { hasLocalActor } from "@matter/main/protocol";
 import { PowerSourceServer } from "@matter/main/behaviors/power-source";
+import { SmokeCoAlarmServer } from "@matter/main/behaviors/smoke-co-alarm";
+import { SmokeCoAlarm } from "@matter/main/clusters/smoke-co-alarm";
+import { LightSensorDevice } from "@matter/main/devices/light-sensor";
+import { SmokeCoAlarmDevice } from "@matter/main/devices/smoke-co-alarm";
+import { WaterLeakDetectorDevice } from "@matter/main/devices/water-leak-detector";
 import { PowerSource } from "@matter/main/clusters/power-source";
 import { hsToRgb, kelvinToMireds, kelvinToRgb, miredsToKelvin, parseHex, rgbToHs, rgbToXy, toHex, xyToRgb } from "./color.js";
 import { log } from "./log.js";
@@ -498,6 +503,53 @@ const KINDS = {
             return null;
         },
     },
+
+    /* Détecteur de fumée : Jeedom 1 = fumée détectée. */
+    smoke: {
+        type: () => SmokeCoAlarmDevice.with(BridgedInfo, SmokeCoAlarmServer.with("SmokeAlarm")),
+        initial: () => ({
+            smokeCoAlarm: {
+                expressedState: SmokeCoAlarm.ExpressedState.Normal,
+                smokeState: SmokeCoAlarm.AlarmState.Normal,
+                batteryAlert: SmokeCoAlarm.AlarmState.Normal,
+                testInProgress: false,
+                hardwareFaultAlert: false,
+                endOfServiceAlert: SmokeCoAlarm.EndOfService.Normal,
+            },
+        }),
+        state(role, value, device) {
+            if (role !== "value") return null;
+            const alarm = toBool(value) !== !!device.spec.params.invert;
+            return {
+                smokeCoAlarm: {
+                    smokeState: alarm ? SmokeCoAlarm.AlarmState.Critical : SmokeCoAlarm.AlarmState.Normal,
+                    expressedState: alarm ? SmokeCoAlarm.ExpressedState.SmokeAlarm : SmokeCoAlarm.ExpressedState.Normal,
+                },
+            };
+        },
+    },
+
+    /* Détecteur de fuite d'eau : Jeedom 1 = fuite ; Matter true = fuite. */
+    leak: {
+        type: () => WaterLeakDetectorDevice.with(BridgedInfo),
+        initial: () => ({ booleanState: { stateValue: false } }),
+        state(role, value, device) {
+            if (role !== "value") return null;
+            return { booleanState: { stateValue: toBool(value) !== !!device.spec.params.invert } };
+        },
+    },
+
+    /* Luminosité en lux ; Matter : 10000 × log10(lux) + 1, sur 1..65534. */
+    illuminance: {
+        type: () => LightSensorDevice.with(BridgedInfo),
+        state(role, value) {
+            if (role !== "value") return null;
+            const lux = toNumber(value);
+            if (lux === null) return null;
+            const measured = lux <= 0 ? 0 : clamp(Math.round(10000 * Math.log10(lux) + 1), 1, 0xfffe);
+            return { illuminanceMeasurement: { measuredValue: measured } };
+        },
+    },
 };
 
 export function isSupportedKind(kind) {
@@ -528,6 +580,9 @@ export class Device {
     #execChain = Promise.resolve();
     #pendingExec = new Map();
     #lastJob = null;
+    /* Dernière valeur de l'info ONLINE du module (null : inconnue ou absente). */
+    #online = null;
+    #lastIdentify = 0;
     #values = new Map();
 
     constructor(spec, link) {
@@ -588,27 +643,30 @@ export class Device {
             if (!Object.hasOwn(values, cmdId)) continue;
             this.#values.set(cmdId, values[cmdId]);
             for (const role of roles) {
-                const patch = role === "battery" ? this.#batteryPatch(values[cmdId]) : this.kind.state(role, values[cmdId], this);
+                const patch = this.#commonPatch(role, values[cmdId]) ?? this.kind.state(role, values[cmdId], this);
                 if (patch) mergeState(state, patch);
             }
         }
 
         const name = matterString(this.spec.name);
         const type = this.hasBattery ? this.kind.type(this).with(Battery) : this.kind.type(this);
+        /* Fusion et non écrasement : l'état tiré des valeurs peut porter sa part d'informations (connexion du module). */
+        const info = {
+            nodeLabel: name,
+            productName: matterString(this.spec.productName || this.spec.name),
+            productLabel: name,
+            vendorName: "Jeedom",
+            serialNumber: matterString(this.spec.key),
+            /* Matter veut un uniqueId distinct du numéro de série. */
+            uniqueId: createHash("md5").update(`jeedom-${this.spec.key}`).digest("hex"),
+            /* Équipement désactivé dans Jeedom, ou module déconnecté : gardé, mais signalé injoignable à Google. */
+            reachable: this.reachable,
+        };
+        const { bridgedDeviceBasicInformation: fromValues, ...clusters } = state;
         this.endpoint = new Endpoint(type, {
             id: this.spec.key,
-            bridgedDeviceBasicInformation: {
-                nodeLabel: name,
-                productName: matterString(this.spec.productName || this.spec.name),
-                productLabel: name,
-                vendorName: "Jeedom",
-                serialNumber: matterString(this.spec.key),
-                /* Matter veut un uniqueId distinct du numéro de série. */
-                uniqueId: createHash("md5").update(`jeedom-${this.spec.key}`).digest("hex"),
-                /* Équipement désactivé dans Jeedom : gardé, mais signalé injoignable à Google. */
-                reachable: this.spec.reachable !== false,
-            },
-            ...state,
+            bridgedDeviceBasicInformation: { ...info, ...(fromValues ?? {}) },
+            ...clusters,
         });
         registry.set(this.endpoint, this);
         return this.endpoint;
@@ -622,7 +680,7 @@ export class Device {
             patch.productLabel = matterString(this.spec.name);
         }
         if ((previous.reachable !== false) !== (this.spec.reachable !== false)) {
-            patch.reachable = this.spec.reachable !== false;
+            patch.reachable = this.reachable;
         }
         if (!Object.keys(patch).length) return;
         return this.#enqueue(() => this.endpoint.set({ bridgedDeviceBasicInformation: patch }));
@@ -673,6 +731,21 @@ export class Device {
         return { powerSource: batteryState(toNumber(value)) };
     }
 
+    /* Rôles communs à tous les types : batterie et connexion du module. */
+    #commonPatch(role, value) {
+        if (role === "battery") return this.#batteryPatch(value) ?? {};
+        if (role === "online") {
+            this.#online = toBool(value);
+            return { bridgedDeviceBasicInformation: { reachable: this.reachable } };
+        }
+        return null;
+    }
+
+    /* Joignable pour Google : équipement actif dans Jeedom et module connecté (s'il le dit). */
+    get reachable() {
+        return this.spec.reachable !== false && this.#online !== false;
+    }
+
     get structureKey() {
         const { kind, params = {}, cmds = {} } = this.spec;
         return JSON.stringify({
@@ -716,7 +789,7 @@ export class Device {
         this.#values.set(key, value);
         const state = {};
         for (const role of roles) {
-            const patch = role === "battery" ? this.#batteryPatch(value) : this.kind.state(role, value, this);
+            const patch = this.#commonPatch(role, value) ?? this.kind.state(role, value, this);
             if (patch) mergeState(state, patch);
         }
         if (!Object.keys(state).length) return;
@@ -793,6 +866,38 @@ export class Device {
             if (this.endpoint && !this.#retired) this.#enqueue(() => this.endpoint.set({ onOff: { onOff: false } }));
         }, 1000);
         return this.#execChain;
+    }
+
+    /*
+     * « Identifier » demandé par le contrôleur : la lampe ou le relais bascule
+     * deux fois, puis revient à son état. Pour les autres appareils, rien à
+     * faire clignoter : l'ordre est seulement journalisé.
+     */
+    attach() {
+        const endpoint = this.endpoint;
+        /* L'appareil courant de l'endpoint, pas forcément celui-ci : il a pu être remplacé depuis (commandes modifiées). */
+        endpoint?.events?.identify?.startIdentifying?.on(() => {
+            registry.get(endpoint)?.identify();
+        });
+    }
+
+    identify() {
+        const { cmds, kind } = this.spec;
+        if (Date.now() - this.#lastIdentify < 15_000) return;
+        this.#lastIdentify = Date.now();
+        const canSwitch = cmds.on && cmds.off && !["scenario", "lock", "cover", "thermostat"].includes(kind);
+        if (!canSwitch) {
+            log.info(`${this.label} : identification demandée (rien à faire clignoter)`);
+            return;
+        }
+        const wasOn = !!this.endpoint?.state?.onOff?.onOff;
+        const steps = wasOn ? [cmds.off, cmds.on, cmds.off, cmds.on] : [cmds.on, cmds.off, cmds.on, cmds.off];
+        log.info(`${this.label} : identification, l'appareil va basculer deux fois`);
+        steps.forEach((cmdId, i) => {
+            setTimeout(() => {
+                if (!this.#retired) this.#link.exec(cmdId, {}).catch(error => log.warning(`${this.label} : identification :`, error));
+            }, i * 1500);
+        });
     }
 
     commandOnOff(on) {

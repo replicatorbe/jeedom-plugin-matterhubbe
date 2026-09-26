@@ -114,6 +114,7 @@ export class Bridge {
         const device = new Device({ ...spec, bridgeId: this.config.id }, this.#link);
         try {
             await this.#aggregator.add(device.createEndpoint(values));
+            device.attach();
             this.#devices.set(spec.key, device);
             log.debug(`${this.label} : + ${spec.name} (${spec.kind}, ${spec.key})`);
         } catch (error) {

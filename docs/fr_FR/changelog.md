@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5
+
+- Un module déconnecté (info ONLINE) apparaît « hors ligne » dans Google.
+- Alertes dans le centre de messages : pont désappairé, pont qui ne démarre
+  pas, appareil exposé supprimé ou sans types génériques.
+- Commandes « Code d'appairage » et « Autoriser un nouvel appairage » sur le
+  pont, pour les scénarios et l'application mobile.
+- « Identifier » dans Google fait basculer deux fois la lampe ou le relais.
+- Récapitulatif « Ce que Google voit » dans l'onglet « Pont ».
+- Détecteurs de fumée, de fuite d'eau et capteurs de luminosité.
+
 ## 0.4
 
 - « Proposer une sélection » : coche en un clic ce qui est utile dans Google,

@@ -91,11 +91,22 @@ Le type d'appareil est déduit des **types génériques** des commandes
 | `THERMOSTAT_SET_SETPOINT` (+ `THERMOSTAT_SETPOINT`, `THERMOSTAT_TEMPERATURE` ou `TEMPERATURE`, `THERMOSTAT_STATE`, `THERMOSTAT_MODE`, `THERMOSTAT_SET_MODE`) | Thermostat (chauffage) |
 | `LOCK_CLOSE` + `LOCK_OPEN` (+ `LOCK_STATE`) | Serrure |
 | `HEATING_ON` + `HEATING_OFF` (+ `HEATING_STATE`) : fil pilote | Prise (marche / arrêt du chauffage) |
+| `SMOKE` | Détecteur de fumée |
+| `WATER_LEAK`, `FLOOD` | Détecteur de fuite d'eau |
+| `BRIGHTNESS` (lux) | Capteur de luminosité |
 | Un **scénario** Jeedom | Interrupteur qui lance le scénario |
 
 Un équipement qui a une info `BATTERY` la transmet à ses capteurs, sa serrure
 et son volet : Google affiche le niveau et prévient quand la pile faiblit
 (alerte sous 20 %, remplacement sous 10 %).
+
+Un équipement qui a une info `ONLINE` (connexion du module, fréquente sur les
+Shelly, ESPHome…) apparaît **hors ligne** dans Google quand le module ne répond
+plus, au lieu de garder un état périmé.
+
+Les détecteurs de fumée et de fuite sont proposés, sauf quand l'équipement est
+une caméra (sa « détection de fumée » n'est pas un vrai détecteur). Selon les
+versions de Google Home, ces types peuvent ne pas encore être affichés.
 | `OPENING`, `OPENING_WINDOW` | Capteur d'ouverture |
 | `PRESENCE` | Capteur de présence |
 | `TEMPERATURE` | Capteur de température |
@@ -160,12 +171,32 @@ scénario, puis l'interrupteur repasse à « éteint » tout seul, prêt pour la
 suivante. Donnez-lui un nom facile à dire : « Ok Google, allume mode cinéma ».
 Un scénario désactivé dans Jeedom apparaît « hors ligne » dans Google.
 
+## Retrouver un appareil : « Identifier »
+
+Quand l'application Google Home (ou un autre contrôleur) demande à identifier
+un appareil, une lampe ou un relais bascule deux fois puis revient à son état :
+pratique pour savoir quel « Plafonnier » ranger dans quelle pièce.
+
 ## Réagir aux ordres de Google
 
 Le pont a une commande info **Dernier ordre Google** : l'appareil et l'action
 demandée (« Plafonnier salon : allumer »), mise à jour à chaque ordre, même
 identique au précédent. Un scénario Jeedom peut s'en servir comme
 déclencheur, pour journaliser ou prévenir.
+
+Deux autres commandes servent aux scénarios et à l'application mobile :
+**Code d'appairage** (info) et **Autoriser un nouvel appairage** (action, ouvre
+l'appairage pendant 15 minutes).
+
+## Alertes
+
+Le centre de messages de Jeedom prévient, une seule fois tant que la situation
+dure : quand plus aucun contrôleur n'est appairé (Google a oublié le pont),
+quand le pont ne démarre pas (port déjà utilisé…), et quand un appareil exposé
+a été supprimé ou a perdu ses types génériques.
+
+L'onglet « Pont » résume aussi **ce que Google voit** : le nombre d'appareils
+par type, ceux hors ligne et ceux qui ne sont plus exposables.
 
 ## Options par appareil
 
