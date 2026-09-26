@@ -459,6 +459,10 @@ class matterhubbe extends eqLogic {
                 'modes' => array(),
                 'defaultOff' => '',
                 'defaultHeat' => '',
+                'suggested' => false,
+                'warning' => '',
+                'suggestedKind' => '',
+                'suggestedName' => $scenario->getName(),
             );
         }
         return $out;
@@ -482,6 +486,7 @@ class matterhubbe extends eqLogic {
                 continue;
             }
             $object = $eqLogic->getObject();
+            $objectName = is_object($object) ? $object->getName() : '';
             foreach ($analysis as $family => $info) {
                 $kinds = array();
                 foreach ($info['kinds'] as $kind) {
@@ -505,9 +510,36 @@ class matterhubbe extends eqLogic {
                     }, $info['modes']) : array(),
                     'defaultOff' => isset($info['defaultOff']) ? $info['defaultOff'] : '',
                     'defaultHeat' => isset($info['defaultHeat']) ? $info['defaultHeat'] : '',
-                );
+                ) + self::suggestion($family, $analysis, $eqLogic);
             }
         }
+        /* Noms proposés : suivis de la pièce quand plusieurs équipements portent le même nom. */
+        $counts = array();
+        foreach ($out as $candidate) {
+            $key = mb_strtolower(self::suggestName($candidate['name'], ''));
+            $counts[$key][$candidate['eq_id']] = true;
+        }
+        foreach ($out as &$candidate) {
+            $base = self::suggestName($candidate['name'], '');
+            $name = self::suggestName($candidate['name'], $candidate['object'], count($counts[mb_strtolower($base)]) > 1);
+            /*
+             * Une sonde dit ce qu'elle mesure (« Température salle à manger »),
+             * sauf si son nom le dit déjà ; un nom d'un seul mot (« Cuisine »)
+             * est précédé de ce qu'il commande.
+             */
+            $sensor = in_array($candidate['family'], array('temperature', 'humidity'));
+            if (($sensor && !preg_match('/(temp|sonde|humid|hygro|thermo)/iu', $name)) || count(preg_split('/\s+/', $name)) == 1) {
+                $what = ($candidate['family'] == 'energy' && $candidate['suggestedKind'] == 'onoff_light') ? __('Lumière', __FILE__)
+                    : ($candidate['family'] == 'energy' ? __('Prise', __FILE__) : $candidate['familyLabel']);
+                /* Première lettre en minuscule, sauf pour un sigle (« ESP bureau » le reste). */
+                $second = mb_substr($name, 1, 1);
+                $lower = ($second !== '' && mb_strtoupper($second) === $second && mb_strtolower($second) !== $second) ? $name
+                    : mb_strtolower(mb_substr($name, 0, 1)) . mb_substr($name, 1);
+                $name = mb_substr($what . ' ' . $lower, 0, 32);
+            }
+            $candidate['suggestedName'] = $name;
+        }
+        unset($candidate);
         usort($out, function ($a, $b) {
             $cmp = strcasecmp($a['object'], $b['object']);
             if ($cmp == 0) {
@@ -904,6 +936,188 @@ class matterhubbe extends eqLogic {
             $bridge->checkAndUpdateCmd('controllers', count($fabrics));
             $bridge->checkAndUpdateCmd('devices', isset($status['devices']) ? (int) $status['devices'] : 0);
         }
+    }
+
+
+    /* ========================================================== AIDE À LA CONFIGURATION */
+
+    /* Mots courants des noms d'équipements, pour découper les identifiants collés (« shellyplafondsalon »). */
+    const NAME_WORDS = 'plafond plafonnier salon cuisine chambre bureau couloir entree entre hall palier escalier etage rdc cave grenier garage
+        buanderie cellier dressing salle bain douche wc toilette toilettes terrasse jardin piscine veranda pergola abri allee parking
+        atelier local technique portail porte fenetre baie velux volet volets store stores facade exterieur interieur
+        spot spots projecteur projecteurs lampe lampes led leds applique appliques lustre suspension ruban bandeau guirlande
+        eclairage lumiere lumieres ambiance lampadaire chevet bibliotheque television tv
+        prise prises multiprise radiateur seche serviette chaudiere chauffage chauffe eau ballon pompe arrosage vmc ventilation
+        mode boost eco confort nuit jour verrou gache sonde temp temperature humidite presence mouvement ouverture bouton
+        tableau electrique statut etat moteur meuble manger vestiaire parents enfants amis invite bebe
+        nord sud est ouest cote avant arriere gauche droite haut bas milieu centre principal principale sam de du la le les';
+
+    const NAME_ACCENTS = array(
+        'entree' => 'entrée', 'entre' => 'entrée', 'etage' => 'étage', 'fenetre' => 'fenêtre', 'veranda' => 'véranda', 'allee' => 'allée',
+        'facade' => 'façade', 'exterieur' => 'extérieur', 'interieur' => 'intérieur', 'eclairage' => 'éclairage',
+        'lumiere' => 'lumière', 'lumieres' => 'lumières', 'bibliotheque' => 'bibliothèque', 'television' => 'télévision',
+        'seche' => 'sèche', 'chaudiere' => 'chaudière', 'electrique' => 'électrique', 'etat' => 'état', 'invite' => 'invité',
+        'bebe' => 'bébé', 'cote' => 'côté', 'arriere' => 'arrière', 'gache' => 'gâche', 'humidite' => 'humidité',
+        'temperature' => 'température', 'sam' => 'salle à manger',
+    );
+
+    /* Morceaux purement techniques des noms (marque, modèle, protocole) : retirés. */
+    const NAME_TECH = '/^(shelly(plus|pro)?\d*(pm|em)?|mini\d*g?\d*|gen\d|omg|esp\d*|ble|plug|em|pm|sonoff|tasmota|zigbee|zwave|z2m|mqtt|wifi|gw|\d+)$/';
+
+    /* Découpe un morceau collé en mots connus ; null si trop de lettres restent inconnues. */
+    private static function segmentWord($_chunk) {
+        static $dictionary = null;
+        if ($dictionary === null) {
+            $dictionary = array_flip(preg_split('/\s+/', trim(self::NAME_WORDS)));
+        }
+        if (isset($dictionary[$_chunk])) {
+            return array($_chunk);
+        }
+        $n = strlen($_chunk);
+        /* Coût minimal pour découper les i premiers caractères : un mot connu coûte 1, une lettre inconnue 3. */
+        $cost = array_fill(0, $n + 1, PHP_INT_MAX);
+        $back = array_fill(0, $n + 1, null);
+        $cost[0] = 0;
+        for ($i = 0; $i < $n; $i++) {
+            if ($cost[$i] === PHP_INT_MAX) {
+                continue;
+            }
+            for ($len = 2; $len <= min(14, $n - $i); $len++) {
+                $word = substr($_chunk, $i, $len);
+                if (isset($dictionary[$word]) && $cost[$i] + 1 < $cost[$i + $len]) {
+                    $cost[$i + $len] = $cost[$i] + 1;
+                    $back[$i + $len] = array($i, true);
+                }
+            }
+            if ($cost[$i] + 3 < $cost[$i + 1]) {
+                $cost[$i + 1] = $cost[$i] + 3;
+                $back[$i + 1] = array($i, false);
+            }
+        }
+        $parts = array();
+        $unknown = '';
+        $unknownTotal = 0;
+        for ($i = $n; $i > 0; $i = $back[$i][0]) {
+            if ($back[$i][1]) {
+                if ($unknown !== '') {
+                    $parts[] = $unknown;
+                    $unknown = '';
+                }
+                $parts[] = substr($_chunk, $back[$i][0], $i - $back[$i][0]);
+            } else {
+                $unknown = $_chunk[$back[$i][0]] . $unknown;
+                $unknownTotal++;
+            }
+        }
+        if ($unknown !== '') {
+            $parts[] = $unknown;
+        }
+        $parts = array_reverse($parts);
+        $known = count(array_filter($parts, function ($part) use ($dictionary) {
+            return isset($dictionary[$part]);
+        }));
+        /* Un prénom ou un reste de quelques lettres passe (« chambre loic ») ; un charabia, non. */
+        return ($known > 0 && $unknownTotal <= 5) ? $parts : null;
+    }
+
+    /*
+     * Nom lisible pour Google, à partir d'un nom Jeedom technique
+     * (« Shelly 1 440FA4 — shellyplafondsalon » → « Plafond salon »). Un nom
+     * déjà lisible est gardé tel quel. Suivi de la pièce s'il est trop vague
+     * (un seul mot) ou partagé par plusieurs équipements.
+     */
+    public static function suggestName($_name, $_object, $_ambiguous = false) {
+        $name = trim($_name);
+        $technical = strpos($name, ' — ') !== false || strpos($name, '_') !== false
+            || (strpos($name, ' ') === false && strlen($name) > 12);
+        if ($technical) {
+            $base = strpos($name, ' — ') !== false ? substr($name, strrpos($name, ' — ') + strlen(' — ')) : $name;
+            $base = preg_replace('/([a-z])([A-Z])/', '$1 $2', $base);
+            $words = array();
+            foreach (preg_split('/[\s_\-.]+/', strtolower($base)) as $chunk) {
+                if ($chunk === '' || preg_match(self::NAME_TECH, $chunk)) {
+                    continue;
+                }
+                /* « shellyplafondsalon », « shellymini1vestiaire » : préfixes techniques collés, parfois plusieurs. */
+                do {
+                    $previous = $chunk;
+                    $chunk = preg_replace('/^(shelly(plus|pro)?\d*(pm|em)?|mini\d*g\d*|mini\d+)/', '', $chunk);
+                } while ($chunk !== $previous && $chunk !== '');
+                if ($chunk === '') {
+                    continue;
+                }
+                $parts = self::segmentWord($chunk);
+                foreach ($parts === null ? array($chunk) : $parts as $part) {
+                    /* Reste tronqué de deux lettres (identifiant coupé à 32 caractères) : ignoré. */
+                    if ($parts !== null && strlen($part) <= 2 && !in_array($part, array('tv', 'wc', 'de', 'du', 'la', 'le'))) {
+                        continue;
+                    }
+                    $words[] = isset(self::NAME_ACCENTS[$part]) ? self::NAME_ACCENTS[$part] : $part;
+                }
+            }
+            if (count($words) > 0) {
+                $name = implode(' ', $words);
+            }
+        }
+        $object = trim((string) $_object);
+        $plain = function ($text) {
+            return strtolower(iconv('UTF-8', 'ASCII//TRANSLIT//IGNORE', $text));
+        };
+        if ($object !== '' && strpos($plain($name), $plain($object)) === false
+            && ($_ambiguous || count(preg_split('/\s+/', $name)) == 1)) {
+            $name .= ' ' . mb_strtolower($object);
+        }
+        $name = mb_strtoupper(mb_substr($name, 0, 1)) . mb_substr($name, 1);
+        return mb_substr($name, 0, 32);
+    }
+
+    /* Appareils que l'on peut couper sans le vouloir d'un « Ok Google, éteins tout » : jamais proposés. */
+    const RISKY_WORDS = '/(modem|box|routeur|router|nvr|nas|serveur|server|switch r|onduleur|ups|frigo|cong[eé]lateur|freezer|fridge|pompe|vmc|chaudi|alarme|cam[eé]ra|ordinateur|\bpc\b|portail|garage|gache|g[aâ]che|verrou|serrure|tableau|contacteur|aquarium)/iu';
+
+    /* Mots qui disent qu'un relais commande un éclairage. */
+    const LIGHT_WORDS = '/(plafon|spot|projecteur|lampe|\bled|applique|lustre|suspension|ruban|bandeau|guirlande|eclairage|éclairage|lumi[eè]re|lampadaire|chevet|facade|façade)/iu';
+
+    /*
+     * Proposition de sélection : ce qui a du sens dans Google, sans ce qui est
+     * risqué (modem, NVR, VMC…), ni les mesures internes des modules (la
+     * température d'un relais n'est pas celle de la pièce), ni les présences
+     * de téléphones ou de caméras.
+     */
+    private static function suggestion($_family, $_analysis, $_eqLogic) {
+        $name = $_eqLogic->getName();
+        $out = array('suggested' => false, 'warning' => '', 'suggestedKind' => '');
+        if (in_array($_family, array('light', 'energy', 'heating')) && preg_match(self::RISKY_WORDS, $name)) {
+            $out['warning'] = __('à ne pas couper par erreur (« éteins tout »)', __FILE__);
+            return $out;
+        }
+        if ($_eqLogic->getIsEnable() != 1) {
+            return $out;
+        }
+        switch ($_family) {
+            case 'light':
+            case 'heating':
+            case 'cover':
+            case 'thermostat':
+            case 'lock':
+                $out['suggested'] = true;
+                break;
+            case 'energy':
+                $out['suggested'] = true;
+                if (preg_match(self::LIGHT_WORDS, $name)) {
+                    $out['suggestedKind'] = 'onoff_light';
+                }
+                break;
+            case 'contact':
+                $out['suggested'] = true;
+                break;
+            case 'temperature':
+            case 'humidity':
+                /* Une vraie sonde de pièce : pas un module qui commande aussi une lumière ou une prise, ni un appareil (onduleur, chaudière…). */
+                $out['suggested'] = !isset($_analysis['light']) && !isset($_analysis['energy']) && !isset($_analysis['heating'])
+                    && !isset($_analysis['thermostat']) && !preg_match(self::RISKY_WORDS, $name);
+                break;
+        }
+        return $out;
     }
 
     /* ========================================================== DÉMON */

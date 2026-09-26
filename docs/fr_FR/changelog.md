@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4
+
+- « Proposer une sélection » : coche en un clic ce qui est utile dans Google,
+  sans ce qu'un « éteins tout » ne doit pas couper (modem, VMC, chaudière,
+  portail…), signalé en rouge ; les relais d'éclairage sont proposés en
+  « Lumière ».
+- « Noms automatiques » : des noms lisibles à la place des identifiants
+  techniques (« Plafond salon », « Température cuisine »).
+- Filtres par pièce et par fonction dans l'onglet « Appareils exposés ».
+
 ## 0.3
 
 - Scénarios Jeedom pilotables depuis Google : un scénario coché devient un

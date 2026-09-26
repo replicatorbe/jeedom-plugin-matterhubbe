@@ -184,6 +184,12 @@ $eqLogics = eqLogic::byType($plugin->getId());
 						<li>{{« Apparaît comme » : un relais qui commande un plafonnier sera mieux en Lumière qu'en Prise. Changer ce choix plus tard recrée l'appareil dans Google.}}</li>
 						<li>{{Le nom est celui de l'appareil dans Google (32 caractères au plus) ; vide, c'est celui de l'équipement. Préférez des noms uniques et parlants : « Plafonnier salon » plutôt que « Plafonnier ».}}</li>
 					</ul>
+					<div style="margin-bottom:10px;display:flex;gap:6px;flex-wrap:wrap;">
+						<a class="btn btn-success btn-sm" id="bt_matterhubbeSuggest" role="button" tabindex="0" title="{{Coche lumières, prises, volets, thermostats, serrures, ouvertures et vraies sondes ; laisse de côté ce qu'un « éteins tout » ne doit pas couper (modem, VMC, chaudière, portail…).}}"><i class="fas fa-magic"></i> {{Proposer une sélection}}</a>
+						<a class="btn btn-default btn-sm" id="bt_matterhubbeAutoNames" role="button" tabindex="0" title="{{Remplit les noms vides des appareils cochés avec un nom lisible, modifiable ensuite.}}"><i class="fas fa-i-cursor"></i> {{Noms automatiques}}</a>
+						<select class="form-control input-sm" id="sel_matterhubbeObject" style="width:auto;" aria-label="{{Pièce}}"><option value="">{{Toutes les pièces}}</option></select>
+						<select class="form-control input-sm" id="sel_matterhubbeFamily" style="width:auto;" aria-label="{{Fonction}}"><option value="">{{Toutes les fonctions}}</option></select>
+					</div>
 					<div class="input-group" style="margin-bottom:10px;">
 						<input class="form-control roundedLeft" placeholder="{{Filtrer par nom, objet, plugin ou fonction}}" id="in_matterhubbeFilter">
 						<span class="input-group-btn">

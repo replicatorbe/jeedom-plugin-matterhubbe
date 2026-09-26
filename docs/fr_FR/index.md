@@ -51,9 +51,9 @@ message du type « Impossible d'ajouter l'appareil », sans autre explication.
    « Jeedom » est créé : un seul suffit pour Google Home. Le démon démarre
    seul, une minute environ après la fin de l'installation.
 2. Sur la page du plugin, ouvrez le pont « Jeedom ».
-3. Onglet **Appareils exposés** : cochez les équipements à envoyer à Google,
-   choisissez éventuellement le type (un relais qui commande un plafonnier sera
-   mieux en « Lumière » qu'en « Prise ») et le nom affiché, puis **Sauvegarder**.
+3. Onglet **Appareils exposés** : cliquez sur **Proposer une sélection**, puis
+   sur **Noms automatiques**, relisez (décochez, renommez, changez le type si
+   besoin) et **Sauvegardez**. Vous pouvez aussi tout cocher à la main.
 4. Onglet **Pont** : le QR code et le code à 11 chiffres apparaissent.
 5. Dans l'application **Google Home** : **Ajouter → Appareil Matter**, scannez
    le QR code, puis rangez les appareils dans vos pièces.
@@ -134,6 +134,23 @@ température + humidité apparaît comme deux capteurs.
   Température de couleur en kelvins (unité « K » ou bornes au-delà de 500),
   en mireds si les bornes sont petites ; sans bornes, 2700-6500 K. Une lampe
   couleur sans commande de blanc reçoit le blanc demandé comme une couleur.
+
+## Aide à la sélection et aux noms
+
+- **Proposer une sélection** coche ce qui a du sens dans Google : lumières,
+  prises, chauffage, volets, thermostats, serrures, ouvertures et vraies sondes
+  de température ou d'humidité. Ce qui est déjà coché reste coché. Sont laissés
+  de côté, et signalés en rouge : ce qu'un « Ok Google, éteins tout » ne doit
+  pas couper (modem, box, NVR, VMC, chaudière, pompe, portail, garage, verrou,
+  tableau électrique…), les températures internes des modules (celle d'un
+  relais n'est pas celle de la pièce) et les présences de téléphones ou de
+  caméras. Un relais dont le nom parle d'éclairage (plafond, spot, projecteur,
+  lampe, façade…) est proposé en « Lumière ».
+- **Noms automatiques** remplit les noms vides des appareils cochés avec un nom
+  lisible : « Shelly 1 440FA4 — shellyplafondsalon » devient « Plafond salon »,
+  une sonde devient « Température cuisine ». Un nom déjà saisi n'est jamais
+  remplacé ; relisez avant d'enregistrer.
+- Les listes **pièce** et **fonction** filtrent le tableau.
 
 ## Scénarios
 

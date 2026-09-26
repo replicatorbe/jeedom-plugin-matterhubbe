@@ -187,6 +187,9 @@ function matterhubbeRenderDevices() {
     if (_c.isEnable != 1) {
       html += ' <span class="label label-warning" title="{{Désactivé dans Jeedom : Google le verra « hors ligne » tant qu\'il le restera.}}">{{désactivé}}</span>'
     }
+    if (_c.warning) {
+      html += ' <span class="label label-danger"><i class="fas fa-exclamation-triangle"></i> ' + matterhubbeEscape(_c.warning) + '</span>'
+    }
     html += '</td>'
     html += '<td>' + matterhubbeEscape(_c.familyLabel) + '</td>'
     html += '<td>'
@@ -249,10 +252,14 @@ function matterhubbeOptionsHtml(_c, _selected) {
 function matterhubbeFilter() {
   var text = document.getElementById('in_matterhubbeFilter').value.trim().toLowerCase()
   var onlySelected = document.getElementById('bt_matterhubbeOnlySelected').getAttribute('data-state') === '1'
+  var object = document.getElementById('sel_matterhubbeObject').value
+  var family = document.getElementById('sel_matterhubbeFamily').value
   var visibleObjects = {}
   document.querySelectorAll('#table_matterhubbeDevices tr.matterhubbeDevice').forEach(function (_tr) {
     var search = _tr.getAttribute('data-search')
     var visible = (search === '' || text === '' || search.indexOf(text) >= 0)
+    if (object !== '' && ('=' + _tr.getAttribute('data-object')) !== object) { visible = false }
+    if (family !== '' && _tr.getAttribute('data-family') !== family) { visible = false }
     if (onlySelected && !_tr.querySelector('.matterhubbeSelect').checked) {
       visible = false
     }
@@ -294,8 +301,34 @@ function matterhubbeReadRow(_tr) {
 function matterhubbeLoadCandidates() {
   matterhubbeAjax('candidates', {}, function (_result) {
     matterhubbeCandidates = _result.candidates
+    matterhubbeFillFilters()
     matterhubbeRenderDevices()
   })
+}
+
+/* Listes « pièce » et « fonction » tirées des équipements proposés ; le choix en cours est gardé. */
+function matterhubbeFillFilters() {
+  var fill = function (_id, _values) {
+    var select = document.getElementById(_id)
+    var current = select.value
+    while (select.options.length > 1) { select.remove(1) }
+    _values.forEach(function (_v) {
+      var option = document.createElement('option')
+      option.value = _v.value
+      option.textContent = _v.label
+      select.appendChild(option)
+    })
+    select.value = current
+    if (select.value !== current) { select.value = '' }
+  }
+  var objects = {}
+  var families = {}
+  matterhubbeCandidates.forEach(function (_c) {
+    objects[_c.object] = _c.object || '{{Sans objet}}'
+    families[_c.family] = _c.familyLabel
+  })
+  fill('sel_matterhubbeObject', Object.keys(objects).sort().map(function (_k) { return { value: '=' + _k, label: objects[_k] } }))
+  fill('sel_matterhubbeFamily', Object.keys(families).map(function (_k) { return { value: _k, label: families[_k] } }))
 }
 
 /* ------------------------------------------------------------ appairage */
@@ -441,6 +474,67 @@ function matterhubbeLoadStatus() {
   })
 }
 
+/*
+ * Proposition de sélection : coche ce que le plugin juge utile dans Google,
+ * sans jamais rien décocher de ce que l'utilisateur a déjà choisi. Un relais
+ * dont le nom parle d'éclairage est proposé en « Lumière ».
+ */
+function matterhubbeSuggest() {
+  if (!matterhubbeCandidates) { return }
+  var added = []
+  matterhubbeCandidates.forEach(function (_c) {
+    var key = matterhubbeRowKey(_c.eq_id, _c.family)
+    if (_c.suggested && !matterhubbeSelection[key]) { added.push(_c) }
+  })
+  if (added.length === 0) {
+    jeedomUtils.showAlert({ message: '{{Rien de plus à proposer : tout ce qui est utile est déjà coché.}}', level: 'info' })
+    return
+  }
+  matterhubbeConfirm('{{Cocher}} ' + added.length + ' {{appareil(s) proposé(s) ? Ce qui est déjà coché reste coché ; vous pourrez tout relire avant d\'enregistrer.}}', function (_ok) {
+    if (!_ok) { return }
+    added.forEach(function (_c) {
+      var item = { eq_id: _c.eq_id, family: _c.family, kind: _c.suggestedKind || _c.default, name: '', label: _c.humanName }
+      matterhubbeSelection[matterhubbeRowKey(_c.eq_id, _c.family)] = item
+    })
+    matterhubbeMarkModified()
+    matterhubbeUpdateCount()
+    matterhubbeRenderDevices()
+    var only = document.getElementById('bt_matterhubbeOnlySelected')
+    only.setAttribute('data-state', '1')
+    only.classList.add('btn-success')
+    only.classList.remove('btn-default')
+    matterhubbeFilter()
+    jeedomUtils.showAlert({ message: added.length + ' {{appareil(s) coché(s). Relisez la liste (seuls les cochés sont affichés), puis enregistrez.}}', level: 'success' })
+  })
+}
+
+/*
+ * Noms automatiques : remplit les noms vides des appareils cochés avec le nom
+ * lisible proposé par le plugin. Un nom déjà saisi n'est jamais remplacé.
+ */
+function matterhubbeAutoNames() {
+  var changed = 0
+  document.querySelectorAll('#table_matterhubbeDevices tr.matterhubbeDevice').forEach(function (_tr) {
+    var box = _tr.querySelector('.matterhubbeSelect')
+    var input = _tr.querySelector('.matterhubbeName')
+    var candidate = matterhubbeFindCandidate(_tr.getAttribute('data-eq_id'), _tr.getAttribute('data-family'))
+    if (!box || !box.checked || !input || input.value.trim() !== '' || !candidate) { return }
+    /* Le nom proposé porte déjà la fonction quand il le faut (« Température salon ») : utilisé tel quel. */
+    var name = candidate.suggestedName || ''
+    if (name === '' || name === matterhubbeDefaultName(candidate)) { return }
+    input.value = name.slice(0, 32)
+    matterhubbeReadRow(_tr)
+    changed++
+  })
+  if (changed === 0) {
+    jeedomUtils.showAlert({ message: '{{Aucun nom à proposer : les appareils cochés ont déjà un nom lisible ou un nom saisi.}}', level: 'info' })
+    return
+  }
+  matterhubbeMarkModified()
+  matterhubbeRefreshNames()
+  jeedomUtils.showAlert({ message: changed + ' {{nom(s) proposé(s) : relisez-les (vous pouvez les modifier), puis enregistrez.}}', level: 'success' })
+}
+
 function matterhubbeConfirm(_message, _callback) {
   if (typeof jeeDialog !== 'undefined' && jeeDialog.confirm) {
     jeeDialog.confirm(_message, _callback)
@@ -577,6 +671,16 @@ window.matterhubbeOnClick = function (_event) {
     matterhubbeRefreshNames()
     return
   }
+  if (target.closest('#bt_matterhubbeSuggest') !== null) {
+    _event.preventDefault()
+    matterhubbeSuggest()
+    return
+  }
+  if (target.closest('#bt_matterhubbeAutoNames') !== null) {
+    _event.preventDefault()
+    matterhubbeAutoNames()
+    return
+  }
   if (target.closest('#bt_matterhubbeOnlySelected') !== null) {
     _event.preventDefault()
     var button = target.closest('#bt_matterhubbeOnlySelected')
@@ -625,6 +729,10 @@ window.matterhubbeOnClick = function (_event) {
 }
 
 window.matterhubbeOnChange = function (_event) {
+  if (_event.target.id === 'sel_matterhubbeObject' || _event.target.id === 'sel_matterhubbeFamily') {
+    matterhubbeFilter()
+    return
+  }
   var tr = _event.target.closest('#table_matterhubbeDevices tr.matterhubbeDevice')
   if (tr === null) { return }
   if (_event.target.classList.contains('matterhubbeSelect')) {
