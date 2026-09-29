@@ -448,7 +448,12 @@ class matterhubbe extends eqLogic {
 
         /* Capteurs : une seule info suffit. */
         $sensors = array(
-            'contact' => array('OPENING', 'OPENING_WINDOW'),
+            /* LOCK_STATE est accepté ici pour exposer une serrure en capteur
+             * d'ouverture — statut seul, verrouillé = fermé —, sans donner à
+             * Google le pouvoir de la déverrouiller (contrairement à la famille
+             * « Serrure » qui, elle, est pilotable). L'utilisateur choisit
+             * l'une ou l'autre dans « Appareils exposés ». */
+            'contact' => array('OPENING', 'OPENING_WINDOW', 'LOCK_STATE'),
             'occupancy' => array('PRESENCE'),
             'temperature' => array('TEMPERATURE'),
             'humidity' => array('HUMIDITY'),
