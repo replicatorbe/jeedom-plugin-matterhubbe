@@ -702,9 +702,15 @@ window.matterhubbeOnClick = function (_event) {
   if (target.closest('#bt_matterhubbeCheckVisible') !== null || target.closest('#bt_matterhubbeUncheckVisible') !== null) {
     _event.preventDefault()
     var check = target.closest('#bt_matterhubbeCheckVisible') !== null
+    var locks = 0
     document.querySelectorAll('#table_matterhubbeDevices tr.matterhubbeDevice').forEach(function (_tr) {
       if (_tr.style.display === 'none') { return }
       var box = _tr.querySelector('.matterhubbeSelect')
+      /* Une serrure se déverrouille depuis Google : elle se coche une par une, jamais en lot. */
+      if (check && !box.checked && _tr.getAttribute('data-family') === 'lock') {
+        locks++
+        return
+      }
       if (box.checked !== check) {
         box.checked = check
         matterhubbeReadRow(_tr)
@@ -712,6 +718,9 @@ window.matterhubbeOnClick = function (_event) {
     })
     matterhubbeMarkModified()
     matterhubbeRefreshNames()
+    if (locks > 0) {
+      jeedomUtils.showAlert({ message: locks + ' {{serrure(s) laissée(s) décochée(s) : cochez-les une par une si vous voulez vraiment les exposer.}}', level: 'warning' })
+    }
     return
   }
   if (target.closest('#bt_matterhubbeSuggest') !== null) {

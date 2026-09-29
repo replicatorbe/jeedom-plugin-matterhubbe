@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.2
+
+- Une serrure n'est plus jamais cochée d'office : ni par « Proposer une
+  sélection », ni par « Cocher les lignes affichées ». Elle est signalée en
+  rouge (déverrouillage à distance) et se coche à la main.
+- La sonde externe d'un module à relais (Shelly 1 + DS18B20) est proposée
+  comme capteur de température de la pièce ; entre plusieurs températures,
+  celle qui n'est pas « interne » est exposée.
+
 ## 0.5.1
 
 - « Proposer une sélection » ne coche plus les températures internes des

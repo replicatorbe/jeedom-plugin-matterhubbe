@@ -163,6 +163,38 @@ class matterhubbe extends eqLogic {
         return self::findCmd($_cmds, $_types, 'action');
     }
 
+    /* Mesure interne d'un module (puce, boîtier), et non de la pièce. */
+    const INTERNAL_WORDS = '/(intern|device|chip|puce|cpu|mcu|processeur|module)/iu';
+
+    /* Sonde branchée sur un module (Shelly 1 + DS18B20, sonde externe) : elle mesure la pièce. */
+    private static function isExternalProbe($_cmd) {
+        return preg_match('/(^|[._])ext([._]|ernal)/i', (string) $_cmd->getLogicalId())
+            || preg_match('/(extern|sonde|probe|ds18b20|dht)/iu', (string) $_cmd->getName());
+    }
+
+    /*
+     * Température ou humidité d'un équipement : la première qui n'est pas une
+     * mesure interne, sinon la première tout court. Un module qui porte sa
+     * « Température interne » avant sa sonde externe ne doit pas faire passer
+     * la puce pour la pièce.
+     */
+    private static function findRoomSensor($_cmds, $_types, $_subType) {
+        $first = null;
+        foreach ((array) $_types as $generic) {
+            foreach ($_cmds as $cmd) {
+                if ($cmd->getGeneric_type() != $generic || $cmd->getType() != 'info'
+                    || ($_subType !== null && $cmd->getSubType() != $_subType)) {
+                    continue;
+                }
+                if (!preg_match(self::INTERNAL_WORDS, $cmd->getName())) {
+                    return $cmd;
+                }
+                $first = ($first === null) ? $cmd : $first;
+            }
+        }
+        return $first;
+    }
+
     private static function cmdId($_cmd) {
         return is_object($_cmd) ? (int) $_cmd->getId() : null;
     }
@@ -427,7 +459,9 @@ class matterhubbe extends eqLogic {
         $subTypes = array('contact' => 'binary', 'occupancy' => null, 'temperature' => 'numeric', 'humidity' => 'numeric',
             'smoke' => 'binary', 'leak' => 'binary', 'illuminance' => 'numeric');
         foreach ($sensors as $family => $types) {
-            $cmd = self::findCmd($cmds, $types, 'info', $subTypes[$family]);
+            $cmd = in_array($family, array('temperature', 'humidity'))
+                ? self::findRoomSensor($cmds, $types, $subTypes[$family])
+                : self::findCmd($cmds, $types, 'info', $subTypes[$family]);
             if (!is_object($cmd)) {
                 continue;
             }
@@ -1235,9 +1269,9 @@ class matterhubbe extends eqLogic {
 
     /*
      * Proposition de sélection : ce qui a du sens dans Google, sans ce qui est
-     * risqué (modem, NVR, VMC…), ni les mesures internes des modules (la
-     * température d'un relais n'est pas celle de la pièce), ni les présences
-     * de téléphones ou de caméras.
+     * risqué (modem, NVR, VMC…), ni les serrures, ni les mesures internes des
+     * modules (la température d'un relais n'est pas celle de la pièce), ni les
+     * présences de téléphones ou de caméras.
      */
     private static function suggestion($_family, $_analysis, $_eqLogic) {
         $name = $_eqLogic->getName();
@@ -1254,8 +1288,16 @@ class matterhubbe extends eqLogic {
             case 'heating':
             case 'cover':
             case 'thermostat':
-            case 'lock':
                 $out['suggested'] = true;
+                break;
+            case 'lock':
+                /*
+                 * Une serrure n'est jamais cochée d'office : exposée, elle se
+                 * déverrouille depuis l'application Google, sans code, et par
+                 * quiconque partage la maison Google. C'est une décision à
+                 * prendre en connaissance de cause, ligne par ligne.
+                 */
+                $out['warning'] = __('serrure : à exposer seulement en connaissance de cause (déverrouillage à distance)', __FILE__);
                 break;
             case 'energy':
                 $out['suggested'] = true;
@@ -1278,15 +1320,20 @@ class matterhubbe extends eqLogic {
             case 'temperature':
             case 'humidity':
                 /*
-                 * Une vraie sonde de pièce : pas un module qui commande aussi une
-                 * lumière ou une prise, ni un appareil (onduleur, chaudière…), ni
-                 * la température interne d'une puce (commande « interne », ou
-                 * plus de 45 °C : aucune pièce habitée n'est à cette température).
+                 * Une vraie sonde de pièce : pas la mesure d'un module qui
+                 * commande aussi une lumière ou une prise, ni d'un appareil
+                 * (onduleur, chaudière…), ni la température interne d'une puce
+                 * (commande « interne », ou plus de 45 °C : aucune pièce habitée
+                 * n'est à cette température). Exception : la sonde externe
+                 * branchée sur un relais (Shelly 1 + DS18B20), qui mesure bien
+                 * la pièce. Un thermostat expose déjà sa propre température.
                  */
                 $cmd = cmd::byId($_analysis[$_family]['cmds']['value']);
-                $internal = is_object($cmd) && (preg_match('/(intern|device|chip|puce|cpu|mcu|processeur|module)/iu', $cmd->getName())
+                $internal = is_object($cmd) && (preg_match(self::INTERNAL_WORDS, $cmd->getName())
                     || ($_family == 'temperature' && is_numeric($cmd->execCmd()) && $cmd->execCmd() > 45));
-                $out['suggested'] = !$internal && !isset($_analysis['light']) && !isset($_analysis['energy']) && !isset($_analysis['heating'])
+                $switching = isset($_analysis['light']) || isset($_analysis['energy']) || isset($_analysis['heating']);
+                $probe = is_object($cmd) && self::isExternalProbe($cmd);
+                $out['suggested'] = !$internal && (!$switching || $probe)
                     && !isset($_analysis['thermostat']) && !preg_match(self::RISKY_WORDS, $name);
                 break;
         }

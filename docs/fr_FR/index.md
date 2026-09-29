@@ -139,7 +139,11 @@ température + humidité apparaît comme deux capteurs.
 - **Serrures** : `LOCK_STATE` à 1 = verrouillée ; les deux actions sont exigées
   (une gâche qui ne sait qu'ouvrir n'est pas proposée). Selon les réglages de
   Google, le déverrouillage à la voix peut être refusé ou demander une
-  confirmation : l'application, elle, déverrouille toujours.
+  confirmation : l'application, elle, déverrouille toujours, sans code, pour
+  tous les membres de la maison Google. C'est pourquoi une serrure n'est
+  **jamais cochée d'office** : ni par « Proposer une sélection », ni par
+  « Cocher les lignes affichées ». Elle est signalée en rouge et se coche à la
+  main, en connaissance de cause.
 - **Couleur** : `#rrggbb` côté Jeedom ; la luminosité reste celle de la lampe.
   Il faut un curseur de luminosité (`LIGHT_SLIDER`), Matter l'impose.
   Température de couleur en kelvins (unité « K » ou bornes au-delà de 500),
@@ -149,15 +153,20 @@ température + humidité apparaît comme deux capteurs.
 ## Aide à la sélection et aux noms
 
 - **Proposer une sélection** coche ce qui a du sens dans Google : lumières,
-  prises, chauffage, volets, thermostats, serrures, ouvertures et vraies sondes
-  de température ou d'humidité. Ce qui est déjà coché reste coché. Les relais
+  prises, chauffage, volets, thermostats, ouvertures et vraies sondes
+  de température ou d'humidité. Ce qui est déjà coché reste coché. Les
+  serrures ne sont jamais cochées d'office (voir plus haut). Les relais
   qu'un « Ok Google, éteins tout » ne doit pas couper (modem, box, NVR, VMC,
   chaudière, pompe, portail, porte de garage, verrou, tableau électrique…) sont
   laissés de côté et signalés en rouge. Ne sont pas proposées non plus, sans
   signalement : les températures internes des modules et des passerelles
   (commande « interne », ou plus de 45 °C) et les présences de téléphones ou de
   caméras. Un relais dont le nom parle d'éclairage (plafond, spot, projecteur,
-  lampe, façade…) est proposé en « Lumière ».
+  lampe, façade…) est proposé en « Lumière ». La sonde externe branchée sur un
+  relais (Shelly 1 + DS18B20 : logicalId `ext…` ou nom « externe », « sonde »)
+  est proposée comme capteur de la pièce, même si l'équipement a aussi un
+  relais ; quand un équipement a plusieurs températures, c'est celle qui n'est
+  pas « interne » qui est exposée.
 - **Noms automatiques** remplit les noms vides des appareils cochés et affichés avec un nom
   lisible : « Shelly 1 440FA4 — shellyplafondsalon » devient « Plafond salon »,
   une sonde devient « Température cuisine ». Un nom déjà saisi n'est jamais
