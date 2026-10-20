@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.3
+
+- Les commandes « Code d'appairage » et « Autoriser un nouvel appairage » sont
+  masquées : visibles sur le dashboard ou l'application mobile, elles
+  permettaient d'ajouter un contrôleur Matter. Masquées une fois à la mise à
+  jour ; les scénarios s'en servent toujours.
+
 ## 0.5.2
 
 - Une serrure n'est plus jamais cochée d'office : ni par « Proposer une

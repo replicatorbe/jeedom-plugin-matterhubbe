@@ -50,6 +50,20 @@ function matterhubbe_update() {
         foreach (matterhubbe::byType('matterhubbe') as $bridge) {
             $bridge->createCommands();
         }
+        /* 0.5.3 : les commandes d'appairage, visibles jusque-là, sont masquées
+         * une seule fois ; les réafficher à la main reste possible. */
+        if (config::byKey('pairingCmdsHidden', 'matterhubbe', 0) == 0) {
+            foreach (matterhubbe::byType('matterhubbe') as $bridge) {
+                foreach (array('pairingCode', 'openCommissioning') as $logicalId) {
+                    $cmd = $bridge->getCmd(null, $logicalId);
+                    if (is_object($cmd) && $cmd->getIsVisible() == 1) {
+                        $cmd->setIsVisible(0);
+                        $cmd->save();
+                    }
+                }
+            }
+            config::save('pairingCmdsHidden', 1, 'matterhubbe');
+        }
     } catch (Throwable $e) {
         log::add('matterhubbe', 'error', __('Mise à jour du plugin :', __FILE__) . ' ' . $e->getMessage());
     }

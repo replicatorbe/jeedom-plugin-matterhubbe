@@ -198,9 +198,12 @@ demandée (« Plafonnier salon : allumer »), mise à jour à chaque ordre, mêm
 identique au précédent. Un scénario Jeedom peut s'en servir comme
 déclencheur, pour journaliser ou prévenir.
 
-Deux autres commandes servent aux scénarios et à l'application mobile :
-**Code d'appairage** (info) et **Autoriser un nouvel appairage** (action, ouvre
-l'appairage pendant 15 minutes).
+Deux autres commandes servent aux scénarios : **Code d'appairage** (info) et
+**Autoriser un nouvel appairage** (action, ouvre l'appairage pendant 15
+minutes). Elles sont masquées : affichées sur le dashboard ou dans
+l'application mobile, elles permettraient à quiconque y a accès d'ajouter son
+propre contrôleur Matter, serrures comprises. Les réafficher reste possible,
+dans la configuration de la commande.
 
 ## Alertes
 

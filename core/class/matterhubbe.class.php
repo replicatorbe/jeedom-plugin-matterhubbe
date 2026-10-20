@@ -1666,7 +1666,7 @@ class matterhubbe extends eqLogic {
         self::reloadDaemonConfig();
     }
 
-    private function addInfoCmd($_logicalId, $_name, $_subType, $_order, $_repeat = false) {
+    private function addInfoCmd($_logicalId, $_name, $_subType, $_order, $_repeat = false, $_visible = 1) {
         $cmd = $this->getCmd(null, $_logicalId);
         if (is_object($cmd)) {
             return;
@@ -1677,7 +1677,7 @@ class matterhubbe extends eqLogic {
         $cmd->setName($_name);
         $cmd->setType('info');
         $cmd->setSubType($_subType);
-        $cmd->setIsVisible(1);
+        $cmd->setIsVisible($_visible);
         $cmd->setOrder($_order);
         if ($_repeat) {
             $cmd->setConfiguration('repeatEventManagement', 'always');
@@ -1690,7 +1690,10 @@ class matterhubbe extends eqLogic {
         $this->addInfoCmd('controllers', __('Contrôleurs', __FILE__), 'numeric', 2);
         $this->addInfoCmd('devices', __('Appareils exposés', __FILE__), 'numeric', 3);
         $this->addInfoCmd('lastCommand', __('Dernier ordre Google', __FILE__), 'string', 4, true);
-        $this->addInfoCmd('pairingCode', __('Code d\'appairage', __FILE__), 'string', 5);
+        /* Masquées : quiconque voit le dashboard ou l'application mobile
+         * pourrait sinon ouvrir l'appairage et ajouter son propre contrôleur
+         * Matter, serrures comprises. Les scénarios s'en servent toujours. */
+        $this->addInfoCmd('pairingCode', __('Code d\'appairage', __FILE__), 'string', 5, false, 0);
         if (!is_object($this->getCmd(null, 'openCommissioning'))) {
             $cmd = new matterhubbeCmd();
             $cmd->setEqLogic_id($this->getId());
@@ -1698,7 +1701,7 @@ class matterhubbe extends eqLogic {
             $cmd->setName(__('Autoriser un nouvel appairage', __FILE__));
             $cmd->setType('action');
             $cmd->setSubType('other');
-            $cmd->setIsVisible(1);
+            $cmd->setIsVisible(0);
             $cmd->setOrder(6);
             $cmd->save();
         }
