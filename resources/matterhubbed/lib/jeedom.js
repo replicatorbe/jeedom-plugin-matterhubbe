@@ -36,7 +36,10 @@ export class JeedomLink {
         }
         const text = await response.text();
         if (!response.ok) {
-            throw new Error(`HTTP ${response.status} : ${text.slice(0, 200)}`);
+            const error = new Error(`HTTP ${response.status} : ${text.slice(0, 200)}`);
+            /* 401 : clé API changée ou API du plugin coupée. Réessayer n'y changera rien. */
+            error.refused = response.status === 401 || response.status === 403;
+            throw error;
         }
         return text;
     }

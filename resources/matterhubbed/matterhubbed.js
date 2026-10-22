@@ -117,6 +117,7 @@ async function fetchConfig() {
         try {
             return await link.getConfig();
         } catch (error) {
+            if (error.refused) return refused(error);
             if (attempt <= 3 || attempt % 10 === 0) {
                 log.warning(`Configuration illisible (essai ${attempt}) :`, error);
             }
@@ -203,6 +204,7 @@ async function pollChanges() {
             failuresInRow = 0;
         } catch (error) {
             if (stopping) return;
+            if (error.refused) return refused(error);
             /* 5 s, puis de plus en plus espacé jusqu'à une minute : un Jeedom arrêté ne doit pas remplir le journal. */
             failuresInRow++;
             const delay = Math.min(60, 5 * failuresInRow);
@@ -278,7 +280,17 @@ const socket = createServer(connection => {
 
 /* ------------------------------------------------------------ cycle de vie */
 
-async function shutdown(signal) {
+/*
+ * Jeedom refuse la clé : elle a changé depuis le lancement, ou l'API du plugin
+ * est coupée. Rester en vie figerait les valeurs vues par Google sous un démon
+ * « ok » ; on s'arrête pour que Jeedom relance le démon avec la clé du moment.
+ */
+function refused(error) {
+    log.error("Jeedom refuse la clé API du démon, arrêt pour relance :", error);
+    return shutdown("clé API refusée", 1);
+}
+
+async function shutdown(signal, code = 0) {
     if (stopping) return;
     stopping = true;
     log.info(`Arrêt du démon (${signal})`);
@@ -294,7 +306,7 @@ async function shutdown(signal) {
             /* déjà supprimé par Jeedom */
         }
     }
-    process.exit(0);
+    process.exit(code);
 }
 
 process.on("SIGTERM", () => shutdown("SIGTERM"));
@@ -303,7 +315,7 @@ process.on("unhandledRejection", error => log.error("Erreur non rattrapée :", e
 /* Dernier filet : l'erreur est journalisée lisiblement avant l'arrêt ; Jeedom relancera le démon. */
 process.on("uncaughtException", error => {
     log.error("Erreur fatale, arrêt du démon :", error);
-    shutdown("erreur fatale").finally(() => process.exit(1));
+    shutdown("erreur fatale", 1).finally(() => process.exit(1));
 });
 
 socket.on("error", error => {
